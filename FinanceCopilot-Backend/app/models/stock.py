@@ -39,9 +39,11 @@ class StockMetrics(BaseModel):
 
 
 class WatchlistItem(BaseModel):
+    id: Optional[str] = None  # MongoDB _id as string
+    user_id: Optional[str] = None  # User ID who owns this watchlist item
     symbol: str
-    name: str
-    added_at: str
+    name: Optional[str] = None
+    added_at: str  # ISO format datetime string
     current_price: Optional[float] = None
     change_percent: Optional[float] = None
 

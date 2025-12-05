@@ -22,11 +22,19 @@ def get_company_news(
 
 @router.get("/general", response_model=List[NewsItem])
 def get_general_news(
-    category: str = Query(default="general", regex="^(general|forex|crypto|merger)$")
+    category: str = Query(default="general", regex="^(general|finance|forex|crypto|merger)$")
 ):
     """Get general financial news"""
     try:
-        return finnhub_service.get_general_news(category)
-    except Exception as e:
+        news_items = finnhub_service.get_general_news(category)
+        return news_items
+    except ValueError as e:
+        # ValueError usually means API key or API error
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Log unexpected errors
+        import traceback
+        print(f"Unexpected error in get_general_news: {e}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 

@@ -6,6 +6,7 @@ from ..services.ai_service import AIService
 router = APIRouter(prefix="/company", tags=["company"])
 
 finnhub_service = FinnhubService()
+
 ai_service = AIService()
 
 

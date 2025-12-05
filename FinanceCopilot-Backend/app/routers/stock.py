@@ -38,3 +38,12 @@ def get_metrics(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.get("/search")
+def search_symbols(q: str = Query(..., min_length=1, description="Search query for stock symbols"), limit: int = Query(default=10, ge=1, le=20)):
+    """Search for stock symbols"""
+    try:
+        return finnhub_service.search_symbols(q, limit)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
