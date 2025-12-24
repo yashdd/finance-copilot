@@ -155,6 +155,27 @@ class FinnhubService:
             ))
         return news_items
     
+    def get_news_by_company_name(self, company_name: str, days: int = 7) -> List[NewsItem]:
+        """Get company news by company name (searches for symbol first, then fetches news)"""
+        try:
+            # First, search for the symbol by company name
+            search_results = self.search_symbols(company_name, limit=1)
+            
+            if not search_results or len(search_results) == 0:
+                # If no symbol found, return empty list
+                return []
+            
+            # Use the first matching symbol
+            symbol = search_results[0].get("symbol", "")
+            if not symbol:
+                return []
+            
+            # Fetch news using the found symbol
+            return self.get_company_news(symbol, days)
+        except Exception as e:
+            print(f"Error getting news by company name '{company_name}': {e}")
+            return []
+    
     def get_general_news(self, category: str = "general") -> List[NewsItem]:
         """Get general financial news"""
         try:

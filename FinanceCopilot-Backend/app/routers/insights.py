@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from ..models.insights import Insight
-from ..services.finnhub_service import FinnhubService
+from ..services.stock_service import StockService
 from ..services.ai_service import AIService
 from datetime import datetime
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
-finnhub_service = FinnhubService()
+stock_service = StockService()
 
 ai_service = AIService()
 
@@ -16,7 +16,7 @@ def get_insights(symbol: str):
     """Get comprehensive AI-generated insights for a stock using Gemini"""
     try:
         # Gather comprehensive data from multiple sources
-        quote = finnhub_service.get_quote(symbol)
+        quote = stock_service.get_quote(symbol)
         quote_data = {
             "current_price": quote.current_price,
             "change": quote.change,
@@ -32,7 +32,7 @@ def get_insights(symbol: str):
         metrics = None
         metrics_data = None
         try:
-            metrics = finnhub_service.get_metrics(symbol)
+            metrics = stock_service.get_metrics(symbol)
             metrics_data = {
                 "pe_ratio": metrics.pe_ratio,
                 "eps": metrics.eps,
@@ -50,7 +50,7 @@ def get_insights(symbol: str):
         # Get recent news (last 7 days)
         news_items = []
         try:
-            news_items_raw = finnhub_service.get_company_news(symbol, days=7)
+            news_items_raw = stock_service.get_company_news(symbol, days=7)
             news_items = [
                 {
                     "title": item.title,

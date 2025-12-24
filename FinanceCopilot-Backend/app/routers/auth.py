@@ -35,11 +35,11 @@ def register(user_data: UserCreate, db=Depends(get_db)):
     import sys
     import traceback
     try:
-        print(f"🔵 [REGISTER] Endpoint called - Email: {user_data.email}, Username: {user_data.username}", flush=True)
-        print(f"🔵 [REGISTER] Database object: {db}", flush=True)
+        print(f"[REGISTER] Endpoint called - Email: {user_data.email}, Username: {user_data.username}", flush=True)
+        print(f"[REGISTER] Database object: {db}", flush=True)
         
         users_collection = db["users"]
-        print(f"🔵 [REGISTER] Users collection obtained: {users_collection}", flush=True)
+        print(f"[REGISTER] Users collection obtained: {users_collection}", flush=True)
         
         # Validate password confirmation
         if user_data.password != user_data.confirm_password:
@@ -135,9 +135,9 @@ def register(user_data: UserCreate, db=Depends(get_db)):
         
         # Convert to User model for response
         try:
-            print(f"🔵 [REGISTER] Converting user_doc to User model...", flush=True)
-            print(f"🔵 [REGISTER] user_doc keys: {list(user_doc.keys())}", flush=True)
-            print(f"🔵 [REGISTER] user_doc _id type: {type(user_doc.get('_id'))}", flush=True)
+            print(f"[REGISTER] Converting user_doc to User model...", flush=True)
+            print(f"[REGISTER] user_doc keys: {list(user_doc.keys())}", flush=True)
+            print(f"[REGISTER] user_doc _id type: {type(user_doc.get('_id'))}", flush=True)
             
             # Convert _id to string for UserResponse (before creating User model)
             user_id_str = str(user_doc["_id"]) if user_doc.get("_id") else None
@@ -147,7 +147,7 @@ def register(user_data: UserCreate, db=Depends(get_db)):
                 user_doc["_id"] = ObjectId(user_doc["_id"])
             
             user = User(**user_doc)
-            print(f"🔵 [REGISTER] User model created successfully", flush=True)
+            print(f"[REGISTER] User model created successfully", flush=True)
             
             return UserResponse(
                 id=user_id_str,
@@ -162,21 +162,21 @@ def register(user_data: UserCreate, db=Depends(get_db)):
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"🔴 [REGISTER] Error creating UserResponse: {e}", flush=True)
-            print(f"🔴 [REGISTER] Traceback:\n{error_trace}", flush=True)
+            print(f"[REGISTER] Error creating UserResponse: {e}", flush=True)
+            print(f"[REGISTER] Traceback:\n{error_trace}", flush=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error creating response: {str(e)}"
             )
             
     except HTTPException as e:
-        print(f"🔴 [REGISTER] HTTPException: {e.detail}", flush=True)
+        print(f"[REGISTER] HTTPException: {e.detail}", flush=True)
         raise
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"🔴 [REGISTER] Unexpected error: {e}", flush=True)
-        print(f"🔴 [REGISTER] Traceback:\n{error_trace}", flush=True)
+        print(f"[REGISTER] Unexpected error: {e}", flush=True)
+        print(f"[REGISTER] Traceback:\n{error_trace}", flush=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"

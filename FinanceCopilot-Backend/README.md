@@ -76,12 +76,12 @@ ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key_here
 
 ## Features
 
-✅ **Watchlist** - Add/remove stocks, track prices  
-✅ **Stock Data** - Real-time quotes, historical candles, fundamentals  
-✅ **News** - Company-specific and general financial news  
-✅ **AI Insights** - AI-generated stock analysis  
-✅ **Company Analysis** - Comprehensive fundamentals with health scores  
-✅ **Chatbot** - RAG-powered conversational assistant  
+**Watchlist** - Add/remove stocks, track prices  
+**Stock Data** - Real-time quotes, historical candles, fundamentals  
+**News** - Company-specific and general financial news  
+**AI Insights** - AI-generated stock analysis  
+**Company Analysis** - Comprehensive fundamentals with health scores  
+**Chatbot** - RAG-powered conversational assistant  
 
 See [API_ENDPOINTS.md](./API_ENDPOINTS.md) for full endpoint documentation.
 

@@ -1,18 +1,18 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from ..models.stock import StockQuote, StockCandle, StockMetrics
-from ..services.finnhub_service import FinnhubService
+from ..services.stock_service import StockService
 
 router = APIRouter(prefix="/stock", tags=["stock"])
 
-finnhub_service = FinnhubService()
+stock_service = StockService()
 
 
 @router.get("/quote/{symbol}", response_model=StockQuote)
 def get_quote(symbol: str):
     """Get real-time quote for a stock"""
     try:
-        return finnhub_service.get_quote(symbol)
+        return stock_service.get_quote(symbol)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -25,7 +25,7 @@ def get_candles(
 ):
     """Get historical candle data for a stock"""
     try:
-        return finnhub_service.get_candles(symbol, resolution, days)
+        return stock_service.get_candles(symbol, resolution, days)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -34,7 +34,7 @@ def get_candles(
 def get_metrics(symbol: str):
     """Get fundamental metrics for a stock"""
     try:
-        return finnhub_service.get_metrics(symbol)
+        return stock_service.get_metrics(symbol)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -43,7 +43,7 @@ def get_metrics(symbol: str):
 def search_symbols(q: str = Query(..., min_length=1, description="Search query for stock symbols"), limit: int = Query(default=10, ge=1, le=20)):
     """Search for stock symbols"""
     try:
-        return finnhub_service.search_symbols(q, limit)
+        return stock_service.search_symbols(q, limit)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -268,3 +268,29 @@ class ChatSessionService:
         except Exception as e:
             print(f"Error checking summarize: {e}")
             return False
+    
+    def get_or_create_session(self, user_id: str) -> ChatSession:
+        """Get the most recent session for a user, or create a new one if none exists"""
+        try:
+            # Get the most recent session
+            session_doc = self.sessions_collection.find_one(
+                {"user_id": ObjectId(user_id)},
+                sort=[("updated_at", -1)]
+            )
+            
+            if session_doc:
+                return ChatSession(
+                    id=str(session_doc["_id"]),
+                    title=session_doc.get("title"),
+                    created_at=session_doc["created_at"].isoformat(),
+                    updated_at=session_doc.get("updated_at", session_doc["created_at"]).isoformat(),
+                    message_count=session_doc.get("message_count", 0),
+                    summary=session_doc.get("summary")
+                )
+            else:
+                # Create a new session if none exists
+                return self.create_session(user_id)
+        except Exception as e:
+            print(f"Error getting or creating session: {e}")
+            # Fallback to creating a new session
+            return self.create_session(user_id)

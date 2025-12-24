@@ -3,7 +3,7 @@ from datetime import datetime
 from bson import ObjectId
 from ..models.stock import WatchlistItem
 from ..database.models import WatchlistItem as DBWatchlistItem
-from .finnhub_service import FinnhubService
+from .stock_service import StockService
 
 
 class WatchlistService:
@@ -13,7 +13,7 @@ class WatchlistService:
         from ..database import get_database
         self.db = db if db is not None else get_database()
         self.watchlist_collection = self.db["watchlist_items"]
-        self.finnhub = FinnhubService()
+        self.stock_service = StockService()
     
     def add_to_watchlist(self, user_id: str, symbol: str, name: str) -> WatchlistItem:
         """Add a stock to user's watchlist"""
@@ -45,7 +45,7 @@ class WatchlistService:
         
         # Get current price
         try:
-            quote = self.finnhub.get_quote(symbol)
+            quote = self.stock_service.get_quote(symbol)
             current_price = quote.current_price
             change_percent = quote.change_percent
         except:
@@ -93,7 +93,7 @@ class WatchlistService:
         for doc in watchlist_docs:
             # Update prices
             try:
-                quote = self.finnhub.get_quote(doc["symbol"])
+                quote = self.stock_service.get_quote(doc["symbol"])
                 # Update in database
                 self.watchlist_collection.update_one(
                     {"_id": doc["_id"]},

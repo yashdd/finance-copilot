@@ -51,7 +51,7 @@ def get_database():
                 if potential_db and ":" not in potential_db and not potential_db.isdigit():
                     db_name = potential_db
         database = client[db_name]
-        print(f"✓ Connected to MongoDB database: {db_name}")
+        print(f"Connected to MongoDB database: {db_name}")
     return database
 
 
@@ -59,12 +59,12 @@ def get_db():
     """Dependency for getting database (for FastAPI dependency injection)"""
     try:
         db = get_database()
-        print(f"🔵 [DB] Database dependency called, returning database: {db}", flush=True)
+        print(f"[DB] Database dependency called, returning database: {db}", flush=True)
         return db
     except Exception as e:
         import traceback
-        print(f"🔴 [DB] Error in get_db dependency: {e}", flush=True)
-        print(f"🔴 [DB] Traceback:\n{traceback.format_exc()}", flush=True)
+        print(f"[DB] Error in get_db dependency: {e}", flush=True)
+        print(f"[DB] Traceback:\n{traceback.format_exc()}", flush=True)
         raise
 
 

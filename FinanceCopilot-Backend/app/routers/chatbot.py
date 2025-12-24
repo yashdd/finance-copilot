@@ -2,14 +2,14 @@ from fastapi import APIRouter, HTTPException, Depends
 from ..models.chat import ChatRequest, ChatMessage, ChatSession, ChatSessionResponse
 from ..services.ai_service import AIService
 from ..services.watchlist_service import WatchlistService
-from ..services.finnhub_service import FinnhubService
+from ..services.stock_service import StockService
 from ..services.chat_session_service import ChatSessionService
 from ..services.rag_service import RAGService
-from ..services.tool_registry import ALL_TOOLS
+from ..services.tool_registry import BASE_TOOLS, create_user_tools
 from ..database import get_db
 from ..database.models import User
 from ..core.security import get_current_active_user
-from langchain.memory import ConversationSummaryBufferMemory
+from langchain.memory import ConversationBufferWindowMemory
 from langchain_core.messages import HumanMessage, AIMessage
 from datetime import datetime
 from typing import List, Dict
@@ -19,12 +19,9 @@ router = APIRouter(prefix="/chatbot", tags=["chatbot"])
 
 ai_service = AIService()
 
-# Initialize tools and agent
-ai_service.set_tools(ALL_TOOLS)
-
-# Memory storage per session: {session_id: ConversationSummaryBufferMemory}
-# This automatically summarizes old conversations to reduce context window
-session_memories: Dict[str, ConversationSummaryBufferMemory] = {}
+# Memory storage per session: {session_id: ConversationBufferWindowMemory}
+# Uses a windowed buffer (no LLM required) to keep recent messages
+session_memories: Dict[str, ConversationBufferWindowMemory] = {}
 
 
 def extract_stock_symbols(message: str) -> list[str]:
@@ -56,14 +53,20 @@ def chat(
     db=Depends(get_db)
 ):
     """Chat with FinanceCopilot AI assistant with enhanced context, session management, and conversation history"""
+    print(f"[CHAT] Received chat request from user {current_user.id}", flush=True)
+    print(f"[CHAT] Message: {request.message[:100]}...", flush=True)
+    print(f"[CHAT] Session ID: {request.session_id}", flush=True)
+    
     try:
         # Initialize services with database session
+        print(f" [CHAT] Initializing services...", flush=True)
         chat_session_service = ChatSessionService(db)
         rag_service = RAGService(db)
         watchlist_service = WatchlistService(db)
-        finnhub_service = FinnhubService()
+        stock_service = StockService()
         
         user_id = str(current_user.id)
+        print(f"[CHAT] User ID: {user_id}", flush=True)
         
         # Handle session management
         session_id = request.session_id
@@ -95,29 +98,18 @@ def chat(
                 # Use existing summary
                 conversation_summary = session_data["session"].summary
         
-        # Get or create LangChain summarization memory for this session
+        # Get or create conversation memory for this session
         memory_key = f"{user_id}_{session_id}"
         if memory_key not in session_memories:
-            # Use ConversationSummaryBufferMemory which automatically summarizes old conversations
-            # max_token_limit: When conversation exceeds this, older messages are summarized
-            # llm: Used for summarization (will use the same LLM from ai_service)
-            memory = ConversationSummaryBufferMemory(
-                llm=ai_service.llm,
-                max_token_limit=1000,  # Summarize when conversation exceeds ~1000 tokens
+            # Windowed memory that keeps the last N messages (no LLM required)
+            memory = ConversationBufferWindowMemory(
+                k=10,
                 return_messages=True,
                 memory_key="chat_history",
-                moving_summary_buffer="summary"
             )
             
-            # Load existing messages into memory
-            # If there's a summary, use it; otherwise load recent messages
+            # Load existing messages into memory (last 10)
             if session_data and session_data["messages"]:
-                # If session has a summary, add it to the memory's summary buffer
-                if session_data["session"].summary:
-                    memory.moving_summary_buffer = session_data["session"].summary
-                    print(f"Loaded existing summary for session {session_id}")
-                
-                # Load recent messages (last 10) into memory
                 recent_messages = session_data["messages"][-10:]
                 for msg in recent_messages:
                     if msg.role == "user":
@@ -140,9 +132,16 @@ def chat(
         rag_context = rag_service.get_relevant_context(request.message, user_id, limit=3)
         
         # Get watchlist for context
-        watchlist_items = watchlist_service.get_all()
+        watchlist_items = watchlist_service.get_all(user_id)
         watchlist_symbols = [item.symbol for item in watchlist_items]
         watchlist_context = ", ".join(watchlist_symbols) if watchlist_symbols else "No stocks in watchlist"
+        
+        # Create user-specific tools with access to user_id and watchlist service
+        user_tools = create_user_tools(user_id, watchlist_service)
+        all_user_tools = BASE_TOOLS + user_tools
+        
+        # Set tools for this user session (with user-specific watchlist tools)
+        ai_service.set_tools(all_user_tools)
         
         # Enhance user message with RAG context if available
         enhanced_message = request.message
@@ -150,27 +149,41 @@ def chat(
             enhanced_message = f"Context from knowledge base:\n{rag_context}\n\nUser question: {request.message}"
         
         # Use tool-calling agent with memory (AI will decide which tools to use)
+        print(f"[CHAT] Calling AI service with tools...", flush=True)
         try:
             response_text = ai_service.chat_response_with_tools(
                 enhanced_message,
                 memory=memory,
                 watchlist_context=watchlist_context
             )
+            print(f"[CHAT] Got response from agent: {response_text[:100]}...", flush=True)
         except Exception as e:
-            print(f"Error with tool calling, falling back to regular chat: {e}")
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"[CHAT] Error with tool calling: {e}", flush=True)
+            print(f"[CHAT] Traceback:\n{error_trace}", flush=True)
             # Fallback to regular chat if tool calling fails
-            context = {
-                "watchlist": watchlist_symbols,
-                "detected_symbols": [],
-                "symbol_data": {},
-                "conversation_summary": conversation_summary,
-                "rag_context": rag_context,
-            }
-            response_text = ai_service.chat_response(
-                enhanced_message,
-                context,
-                conversation_history=conversation_history
-            )
+            print(f"[CHAT] Falling back to regular chat...", flush=True)
+            try:
+                context = {
+                    "watchlist": watchlist_symbols,
+                    "detected_symbols": [],
+                    "symbol_data": {},
+                    "conversation_summary": conversation_summary,
+                    "rag_context": rag_context,
+                }
+                response_text = ai_service.chat_response(
+                    enhanced_message,
+                    context,
+                    conversation_history=conversation_history
+                )
+                print(f"[CHAT] Got fallback response: {response_text[:100]}...", flush=True)
+            except Exception as fallback_error:
+                import traceback
+                fallback_trace = traceback.format_exc()
+                print(f"[CHAT] Fallback also failed: {fallback_error}", flush=True)
+                print(f"[CHAT] Fallback traceback:\n{fallback_trace}", flush=True)
+                raise
         
         # Save assistant response to session
         assistant_message = ChatMessage(
@@ -179,17 +192,6 @@ def chat(
             timestamp=datetime.now().isoformat()
         )
         chat_session_service.add_message(session_id, user_id, assistant_message)
-        
-        # Update session summary if memory has generated/updated a summary
-        # ConversationSummaryBufferMemory automatically updates the summary when needed
-        try:
-            current_summary = memory.moving_summary_buffer
-            if current_summary and current_summary != (session_data["session"].summary if session_data else None):
-                # Summary was updated, save it to session
-                chat_session_service.update_summary(session_id, user_id, current_summary)
-                print(f"Updated summary for session {session_id}")
-        except Exception as e:
-            print(f"Could not update summary: {e}")
         
         # Return response with session_id
         return ChatMessage(
@@ -203,8 +205,9 @@ def chat(
     except Exception as e:
         import traceback
         error_msg = str(e)
-        print(f"Error in chat endpoint: {error_msg}")
-        print(traceback.format_exc())
+        error_trace = traceback.format_exc()
+        print(f"[CHAT] Error in chat endpoint: {error_msg}", flush=True)
+        print(f"[CHAT] Full traceback:\n{error_trace}", flush=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {error_msg}")
 
 
@@ -272,6 +275,34 @@ def delete_session(
         return {"message": "Session deleted successfully"}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/session/current", response_model=ChatSessionResponse)
+def get_or_create_current_session(
+    current_user: User = Depends(get_current_active_user),
+    db=Depends(get_db)
+):
+    """Get or create the current chat session for the user"""
+    try:
+        chat_session_service = ChatSessionService(db)
+        session = chat_session_service.get_or_create_session(str(current_user.id))
+        
+        # Get messages for this session
+        session_data = chat_session_service.get_session(session.id, str(current_user.id))
+        
+        if session_data:
+            return ChatSessionResponse(
+                session=session_data["session"],
+                messages=session_data["messages"]
+            )
+        else:
+            # Return session with empty messages
+            return ChatSessionResponse(
+                session=session,
+                messages=[]
+            )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

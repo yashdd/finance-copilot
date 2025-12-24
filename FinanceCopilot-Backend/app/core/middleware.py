@@ -25,11 +25,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Get the path without query parameters
         path = request.url.path
-        print(f"🔵 Middleware: {request.method} {path}")
+        print(f"[Middleware] {request.method} {path}")
         
         # Skip authentication for OPTIONS requests (CORS preflight) - MUST be first
         if request.method == "OPTIONS":
-            print(f"🔵 Middleware: OPTIONS request (CORS preflight), allowing")
+            print(f"[Middleware] OPTIONS request (CORS preflight), allowing")
             response = await call_next(request)
             # Ensure CORS headers are present for OPTIONS requests
             origin = request.headers.get("Origin", "")
@@ -45,7 +45,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         
         # Skip authentication for public paths
         if any(path == public_path or path.startswith(public_path + "/") for public_path in self.PUBLIC_PATHS):
-            print(f"🔵 Middleware: Public path, allowing request")
+            print(f"[Middleware] Public path, allowing request")
             response = await call_next(request)
             # Add CORS headers for public paths
             origin = request.headers.get("Origin")
@@ -137,7 +137,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             from fastapi.responses import JSONResponse
             import traceback
             origin = request.headers.get("Origin")
-            print(f"🔴 [MIDDLEWARE] Exception caught: {e}", flush=True)
+            print(f"[MIDDLEWARE] Exception caught: {e}", flush=True)
             print(traceback.format_exc(), flush=True)
             response = JSONResponse(
                 status_code=500,

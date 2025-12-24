@@ -25,7 +25,7 @@ async def startup_event():
 
 # Get allowed origins from settings
 ALLOWED_ORIGINS = settings.allowed_origins
-print(f"🔵 CORS: Allowing origins: {ALLOWED_ORIGINS}", flush=True)
+print(f"[CORS] Allowing origins: {ALLOWED_ORIGINS}", flush=True)
 
 
 def add_cors_headers(response: JSONResponse, request: Request) -> JSONResponse:
@@ -66,9 +66,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
     error_trace = traceback.format_exc()
-    print(f"🔴 [GLOBAL] Unhandled exception: {exc}", flush=True)
-    print(f"🔴 [GLOBAL] Path: {request.url.path}", flush=True)
-    print(f"🔴 [GLOBAL] Traceback:\n{error_trace}", flush=True)
+    print(f"[GLOBAL] Unhandled exception: {exc}", flush=True)
+    print(f"[GLOBAL] Path: {request.url.path}", flush=True)
+    print(f"[GLOBAL] Traceback:\n{error_trace}", flush=True)
     response = JSONResponse(
         status_code=500,
         content={

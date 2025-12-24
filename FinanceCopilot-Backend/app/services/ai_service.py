@@ -1,10 +1,13 @@
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Union
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain.memory import ConversationBufferWindowMemory, ConversationSummaryBufferMemory
-from langchain_core.callbacks import Callbacks
+from langchain.memory import ConversationBufferWindowMemory
+from langchain_core.callbacks import Callbacks, BaseCallbackHandler
+from langchain_core.runnables import RunnablePassthrough, RunnableConfig
+from langchain_core.language_models import BaseChatModel
+from langchain_core.outputs import ChatResult
 from ..config import settings
 
 # Fix Pydantic model rebuild issue - import dependencies first
@@ -18,27 +21,115 @@ except Exception as e:
     pass
 
 
+def _validate_and_fix_tool_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
+    """
+    Validate and fix ToolMessage instances before sending to Gemini.
+    
+    STRICT RULES:
+    1. Every ToolMessage MUST have a non-empty name
+    2. If name cannot be inferred, REMOVE the ToolMessage (don't send to Gemini)
+    3. Log all removals for debugging
+    
+    This prevents "function_response.name: Name cannot be empty" errors.
+    """
+    formatted_messages = []
+    removed_count = 0
+    
+    for i, msg in enumerate(messages):
+        if isinstance(msg, ToolMessage):
+            # Check if ToolMessage has a valid name
+            has_valid_name = hasattr(msg, 'name') and msg.name is not None and msg.name != ""
+            
+            if not has_valid_name:
+                # Try to infer tool name from previous AIMessage
+                tool_name = None
+                for prev_msg in reversed(formatted_messages):
+                    if isinstance(prev_msg, AIMessage) and hasattr(prev_msg, 'tool_calls') and prev_msg.tool_calls:
+                        # Get the tool name from the most recent tool call
+                        tool_name = prev_msg.tool_calls[0].get('name', None)
+                        if tool_name:
+                            break
+                
+                if tool_name:
+                    # Successfully inferred name
+                    msg.name = tool_name
+                    formatted_messages.append(msg)
+                    print(f"[GEMINI_FILTER] Fixed ToolMessage at index {i} by inferring name: {tool_name}", flush=True)
+                else:
+                    # Cannot infer name - REMOVE this message to prevent Gemini error
+                    removed_count += 1
+                    print(f"[GEMINI_FILTER] REMOVED ToolMessage at index {i} - no valid name and cannot infer", flush=True)
+                    print(f"[GEMINI_FILTER] Message content preview: {str(msg)[:200]}", flush=True)
+                    # Skip adding this message
+                    continue
+            else:
+                # Name is valid, keep the message
+                formatted_messages.append(msg)
+        else:
+            # Not a ToolMessage, keep as-is
+            formatted_messages.append(msg)
+    
+    if removed_count > 0:
+        print(f"[GEMINI_FILTER] Removed {removed_count} invalid ToolMessage(s) from batch", flush=True)
+    
+    return formatted_messages
+
+
+
+class ValidatingLLM:
+    """Wraps ChatGoogleGenerativeAI to validate and fix messages before sending."""
+    
+    def __init__(self, llm: ChatGoogleGenerativeAI):
+        self._llm = llm
+    
+    def _filter_messages(self, messages):
+        """Filter messages if it's a list of BaseMessage"""
+        if isinstance(messages, list) and len(messages) > 0 and isinstance(messages[0], BaseMessage):
+            return _validate_and_fix_tool_messages(messages)
+        return messages
+    
+    def invoke(self, messages, **kwargs):
+        """Validate messages and invoke LLM"""
+        filtered = self._filter_messages(messages)
+        return self._llm.invoke(filtered, **kwargs)
+    
+    def stream(self, messages, **kwargs):
+        """Validate messages and stream from LLM"""
+        filtered = self._filter_messages(messages)
+        return self._llm.stream(filtered, **kwargs)
+    
+    def bind_tools(self, tools, **kwargs):
+        """Bind tools directly to underlying LLM"""
+        return self._llm.bind_tools(tools, **kwargs)
+    
+    def __getattr__(self, name):
+        """Forward other attributes to underlying LLM"""
+        return getattr(self._llm, name)
+
 class AIService:
     def __init__(self):
         self.llm = None
         self.model_name = None
         self.tools = []
         self.agent_executor = None
+        self.last_error: Optional[str] = None
         
         if settings.gemini_api_key:
             # First, try to detect available models and use the best one
             available_model = self._get_available_model()
             if available_model:
                 try:
-                    self.llm = ChatGoogleGenerativeAI(
+                    base_llm = ChatGoogleGenerativeAI(
                         model=available_model,
                         google_api_key=settings.gemini_api_key,
                         temperature=0.7,
                         top_p=0.8,
                         top_k=40,
                     )
+                    # Using direct ChatGoogleGenerativeAI
+                    self.llm = ValidatingLLM(base_llm)
                     self.model_name = available_model
-                    print(f"LangChain initialized with {available_model}")
+                    print(f"LangChain initialized with {available_model} ")
                 except Exception as e:
                     print(f"Warning: Could not initialize LangChain with {available_model}: {e}")
                     import traceback
@@ -54,15 +145,17 @@ class AIService:
                 
                 for model_name in models_to_try:
                     try:
-                        self.llm = ChatGoogleGenerativeAI(
+                        base_llm = ChatGoogleGenerativeAI(
                             model=model_name,
                             google_api_key=settings.gemini_api_key,
                             temperature=0.7,
                             top_p=0.8,
                             top_k=40,
                         )
+                        # Using direct ChatGoogleGenerativeAI
+                        self.llm = ValidatingLLM(base_llm)
                         self.model_name = model_name
-                        print(f"LangChain initialized with {model_name}")
+                        print(f"LangChain initialized with {model_name} ")
                         break
                     except Exception as e:
                         print(f"Failed to initialize {model_name}: {e}")
@@ -72,6 +165,61 @@ class AIService:
                     print("Warning: Could not initialize any Gemini model")
         else:
             print("Warning: GEMINI_API_KEY not found in environment variables")
+
+    def _try_init_llm(self, model_name: str) -> bool:
+        """Try to initialize Gemini LLM with the given model name."""
+        try:
+            base_llm = ChatGoogleGenerativeAI(
+                model=model_name,
+                google_api_key=settings.gemini_api_key,
+                temperature=0.7,
+                top_p=0.8,
+                top_k=40,
+            )
+            print(f"[AI_SERVICE] Creating ValidatingLLM wrapper...", flush=True)
+            self.llm = ValidatingLLM(base_llm)
+            print(f"[AI_SERVICE] ValidatingLLM created: {self.llm}", flush=True)
+            print(f"[AI_SERVICE] ValidatingLLM._llm: {getattr(self.llm, '_llm', 'NOT SET')}", flush=True)
+            self.model_name = model_name
+            print(f"[AI_SERVICE] LangChain initialized with {model_name}")
+            self.last_error = None
+            return True
+        except Exception as e:
+            import traceback
+            print(f"[AI_SERVICE] Failed to initialize {model_name}: {e}", flush=True)
+            print(f"[AI_SERVICE] Traceback: {traceback.format_exc()}", flush=True)
+            self.last_error = str(e)
+            return False
+
+    def _ensure_llm_initialized(self) -> bool:
+        """Ensure LLM is initialized; attempt re-init with preferred models if needed."""
+        if self.llm:
+            return True
+        if not settings.gemini_api_key:
+            print("[AI_SERVICE] GEMINI_API_KEY missing; cannot initialize LLM")
+            self.last_error = "GEMINI_API_KEY missing"
+            return False
+
+        preferred_models = [
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-pro",
+        ]
+
+        available_model = self._get_available_model()
+        if available_model and self._try_init_llm(available_model):
+            return True
+
+        for candidate in preferred_models:
+            if self._try_init_llm(candidate):
+                return True
+
+        print("[AI_SERVICE] Unable to initialize any Gemini model")
+        if not self.last_error:
+            self.last_error = "Unable to initialize any Gemini model"
+        return False
     
     def _get_available_model(self) -> Optional[str]:
         """Try to find an available Gemini model by listing available models"""
@@ -121,52 +269,108 @@ class AIService:
         else:
             print("Warning: GEMINI_API_KEY not found in environment variables")
     
-    def set_tools(self, tools: List):
-        """Set tools for the agent"""
+    def set_tools(self, tools: List) -> bool:
+        """Set tools for the agent. Returns True on success."""
+        print(f"[AI_SERVICE] set_tools called with {len(tools)} tools", flush=True)
+        if not self._ensure_llm_initialized():
+            print(f"[AI_SERVICE] LLM not initialized; aborting set_tools", flush=True)
+            return False
+        print(f"[AI_SERVICE] LLM available: {self.llm is not None}", flush=True)
+        
         self.tools = tools
-        if self.llm and self.tools:
+        if self.tools:
             try:
+                print(f"[AI_SERVICE] Binding tools to LLM...", flush=True)
                 # Bind tools to LLM
                 self.llm_with_tools = self.llm.bind_tools(self.tools)
+                print(f"[AI_SERVICE] Tools bound successfully", flush=True)
                 
                 # Create agent with tool calling
                 prompt = ChatPromptTemplate.from_messages([
-                    ("system", """You are FinanceCopilot, a knowledgeable financial assistant.
-- Use the provided tools to fetch real-time data when needed
-- Always use tools to get current stock prices, metrics, and news
+                    ("system", """You are FinanceCopilot, an intelligent and proactive financial assistant with autonomous capabilities.
+
+CORE PRINCIPLES:
+- Always use tools to fetch REAL-TIME data - never make up prices, metrics, or data
+- Be proactive: If user asks about a stock, automatically fetch quote, metrics, and recent news
+- Plan multi-step tasks: Break down complex requests into sequential tool calls
 - Reference specific numbers and metrics when available
-- Maintain conversation continuity
+- Maintain conversation continuity and context
 - Be conversational and helpful, not robotic
+- You may share non-personalized, data-backed ideas (e.g., recent top movers or strong profitability) with a brief "not investment advice" disclaimer. Avoid refusing; provide balanced pros/cons and suggest verifying details.
 - IMPORTANT: Do NOT use markdown formatting. Write in plain text only.
 
-When a user asks about a stock:
-1. First search for the symbol if needed (search_stock_symbols)
-2. Get current quote (get_stock_quote)
-3. Get metrics if asked about fundamentals (get_stock_metrics)
-4. Get news if asked about recent events (get_stock_news)
-5. Use watchlist tool if user asks about their watchlist (get_watchlist)
+CRITICAL TOOL USAGE RULES:
+WARNING: NEVER respond with tool outputs unless you explicitly called that tool
+WARNING: NEVER fabricate function_response messages
+WARNING: ONLY return function responses after YOU called the function
+WARNING: If you want to call a tool, use proper tool_calls - don't fake responses
 
-Always fetch real-time data - don't make up prices or metrics."""),
+TOOL USAGE STRATEGY:
+When a user asks about a stock:
+1. If symbol is unclear, search for it (search_stock_symbols)
+2. Always get current quote (get_stock_quote) - this is essential
+3. Get metrics for fundamental analysis (get_stock_metrics)
+4. Get recent news for context (get_stock_news)
+5. Use historical data (get_stock_candles) for trend analysis
+
+WATCHLIST MANAGEMENT:
+- Use get_watchlist to see user's current stocks
+- If user says "add [symbol]", "add [symbol] to watchlist", or similar commands, IMMEDIATELY use add_to_watchlist tool
+- Examples: "add aapl", "add AAPL", "add apple", "add TSLA to watchlist" → Call add_to_watchlist
+- If user says "remove [symbol]" or "delete [symbol]", use remove_from_watchlist tool
+- If user mentions a stock they're interested in, proactively offer to add it to watchlist
+- Always confirm when you successfully add or remove a stock
+
+COMPARISON & ANALYSIS:
+- Use compare_stocks to compare two stocks side-by-side
+- Analyze trends using historical candles data
+- Provide insights based on real data, not assumptions
+
+AUTONOMOUS BEHAVIOR:
+- If user asks "what's in my watchlist?", automatically call get_watchlist
+- If user mentions a stock they're interested in, offer to add it to watchlist
+- If comparing stocks, use compare_stocks tool
+- Always verify data with tools before making claims
+
+ERROR HANDLING:
+- If a tool fails, try alternative approaches
+- If symbol not found, suggest using search_stock_symbols
+- Be transparent about errors and limitations
+
+Remember: You have access to real-time financial data. Use it extensively to provide accurate, data-driven insights."""),
                     MessagesPlaceholder(variable_name="chat_history"),
                     ("human", "{input}"),
                     MessagesPlaceholder(variable_name="agent_scratchpad"),
                 ])
                 
+                print(f"[AI_SERVICE] Creating tool calling agent...", flush=True)
                 agent = create_tool_calling_agent(self.llm_with_tools, self.tools, prompt)
+                print(f"[AI_SERVICE] Agent created successfully", flush=True)
+                
                 self.agent_executor = AgentExecutor(
                     agent=agent,
                     tools=self.tools,
                     verbose=True,
                     handle_parsing_errors=True,
-                    max_iterations=5
+                    max_iterations=8,  # Increased for multi-step reasoning
+                    max_execution_time=30,  # 30 second timeout
+                    return_intermediate_steps=False
                 )
-                print(f"Agent executor created with {len(self.tools)} tools")
+                print(f"[AI_SERVICE] Agent executor created with {len(self.tools)} tools", flush=True)
+                self.last_error = None
+                return True
             except Exception as e:
-                print(f"Warning: Could not create agent executor: {e}")
                 import traceback
-                traceback.print_exc()
+                error_trace = traceback.format_exc()
+                print(f"[AI_SERVICE] Error creating agent executor: {e}", flush=True)
+                print(f"[AI_SERVICE] Traceback:\n{error_trace}", flush=True)
                 self.agent_executor = None
-    
+                self.last_error = str(e)
+                return False
+        else:
+            print(f"[AI_SERVICE] No tools provided", flush=True)
+            self.last_error = "No tools provided"
+            return False
     def _invoke_llm(self, messages: List, system_instruction: str = "") -> str:
         """Invoke LangChain LLM with messages"""
         if not self.llm:
@@ -214,7 +418,7 @@ Always fetch real-time data - don't make up prices or metrics."""),
                 ]
             }
         
-        system_instruction = """You are a financial analyst. Provide concise, punchy insights - just 4-5 cool key points. Be brief, data-driven, and insightful."""
+        system_instruction = """You are a financial analyst. Provide concise, punchy insights - just 5 cool key points. Be brief, data-driven, and insightful."""
         
         # Build concise data context
         price_info = f"Price: ${quote_data.get('current_price', 0):.2f} ({quote_data.get('change_percent', 0):+.2f}%), Volume: {quote_data.get('volume', 0):,}"
@@ -239,7 +443,7 @@ Always fetch real-time data - don't make up prices or metrics."""),
             if top_news:
                 news_info = f"Recent news: {top_news[:100]}"
         
-        prompt = f"""Generate exactly 4-5 concise, insightful bullet points about {symbol} stock.
+        prompt = f"""Generate exactly 5 concise, insightful bullet points about {symbol} stock.
 
 Data:
 - {price_info}
@@ -258,8 +462,9 @@ Example format:
 • P/E ratio of 25 suggests growth expectations are high
 • Recent product launch news could drive further gains
 • Trading above key resistance level, technical breakout confirmed
+• Strong earnings growth trajectory supports current valuation
 
-Generate 4-5 points now:"""
+Generate exactly 5 points now:"""
 
         response_text = self._generate_text(prompt, system_instruction)
         
@@ -304,7 +509,17 @@ Generate 4-5 points now:"""
         if not self.llm:
             return f"{symbol} fundamentals analysis: P/E ratio {metrics.get('pe_ratio', 'N/A')}, Market Cap ${metrics.get('market_cap', 0):,.0f}."
         
-        system_instruction = "You are a financial analyst providing fundamental analysis."
+        # Track which metrics are missing to steer the model away from refusing to answer
+        missing_fields = [k for k, v in metrics.items() if v in (None, "N/A", "")]
+        system_instruction = (
+            "You are a financial analyst providing concise, decision-ready fundamental analysis. "
+            "Even if some metrics are missing, give a best-effort, data-informed view using available metrics, typical industry ranges, and risk flags. "
+            "Never say analysis is impossible; acknowledge gaps briefly and suggest what to check next. Limit to 4-6 sentences and end with two short action items."
+        )
+        
+        missing_note = ""
+        if missing_fields:
+            missing_note = f"Some metrics are missing: {', '.join(missing_fields)}. Use typical benchmarks to fill gaps and still provide an assessment."
         
         prompt = f"""Analyze the financial health of {company_name or symbol} based on these metrics:
 
@@ -317,7 +532,8 @@ Generate 4-5 points now:"""
 - Price to Book: {metrics.get('price_to_book', 'N/A')}
 - Debt to Equity: {metrics.get('debt_to_equity', 'N/A')}
 
-Provide a 3-4 sentence analysis comparing these metrics to industry standards and assessing overall company health."""
+{missing_note}
+Provide a concise assessment covering valuation, profitability, growth momentum, balance sheet leverage, and key risks. End with two short action recommendations (e.g., metrics to monitor, peers to compare, or data to gather)."""
         
         return self._generate_text(prompt, system_instruction)
     
@@ -353,9 +569,14 @@ Summary:"""
             print(f"Error summarizing conversation: {e}")
             return ""
     
-    def chat_response_with_tools(self, user_message: str, memory: ConversationSummaryBufferMemory, watchlist_context: str = "") -> str:
+    def chat_response_with_tools(self, user_message: str, memory, watchlist_context: str = "") -> str:
         """Generate chatbot response using LangChain agent with tool calling and memory"""
+        print(f"[AI_SERVICE] chat_response_with_tools called", flush=True)
+        print(f"[AI_SERVICE] Agent executor exists: {self.agent_executor is not None}", flush=True)
+        print(f"[AI_SERVICE] LLM exists: {self.llm is not None}", flush=True)
+        
         if not self.agent_executor:
+            print(f"[AI_SERVICE] Agent executor not initialized, falling back to regular chat", flush=True)
             # Fallback to regular chat if agent not initialized
             return self.chat_response(user_message, context={}, conversation_history=[])
         
@@ -365,27 +586,43 @@ Summary:"""
             if watchlist_context:
                 input_text = f"User's watchlist: {watchlist_context}\n\n{user_message}"
             
-            # Invoke agent with memory
-            # ConversationSummaryBufferMemory automatically manages the buffer and summary
+            print(f"[AI_SERVICE] Invoking agent executor...", flush=True)
+            # The GeminiLLMWrapper will automatically validate and fix messages
+            # No need to manually format here
             response = self.agent_executor.invoke({
                 "input": input_text,
                 "chat_history": memory.chat_memory.messages
             })
             
+            print(f"[AI_SERVICE] Agent response received", flush=True)
+            output = response.get("output", "I apologize, but I couldn't generate a response.")
+            print(f"[AI_SERVICE] Output length: {len(output)}", flush=True)
+            
             # Update memory with user message and response
-            # The memory will automatically summarize old messages if token limit is exceeded
             memory.chat_memory.add_user_message(user_message)
-            memory.chat_memory.add_ai_message(response.get("output", ""))
+            memory.chat_memory.add_ai_message(output)
             
-            # The summary is automatically updated by ConversationSummaryBufferMemory
-            # when the conversation exceeds max_token_limit
-            
-            return response.get("output", "I apologize, but I couldn't generate a response.")
+            return output
         except Exception as e:
+            import traceback
             error_msg = str(e)
-            print(f"Error in chat_response_with_tools: {error_msg}")
+            error_trace = traceback.format_exc()
+            print(f"[AI_SERVICE] Error in chat_response_with_tools: {error_msg}", flush=True)
+            print(f"[AI_SERVICE] Traceback:\n{error_trace}", flush=True)
+            
+            # Check for quota/rate limit errors
+            if "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                return "I apologize, but I've reached my API quota limit. Please check your Gemini API billing plan or try again later. For now, you can still use the watchlist and stock data features."
+            
             # Fallback to regular chat
-            return self.chat_response(user_message, context={}, conversation_history=[])
+            print(f"[AI_SERVICE] Falling back to regular chat...", flush=True)
+            try:
+                return self.chat_response(user_message, context={}, conversation_history=[])
+            except Exception as fallback_error:
+                fallback_msg = str(fallback_error)
+                if "429" in fallback_msg or "quota" in fallback_msg.lower() or "exceeded" in fallback_msg.lower():
+                    return "I apologize, but I've reached my API quota limit. Please check your Gemini API billing plan or try again later."
+                return f"I encountered an error: {fallback_msg}. Please try again later."
     
     def chat_response(self, user_message: str, context: dict = None, conversation_history: list = None) -> str:
         """Generate chatbot response using LangChain with enhanced RAG context (fallback method)"""
@@ -438,11 +675,12 @@ Summary:"""
         
         # Build system instruction
         system_content = """You are FinanceCopilot, a knowledgeable financial assistant. 
-- Use the provided context data to give accurate, data-driven answers
-- Reference specific numbers and metrics when available
-- Maintain conversation continuity by referencing previous discussions when relevant
-- Be conversational and helpful, not robotic
-- IMPORTANT: Do NOT use markdown formatting (no **bold**, *italic*, or other markdown syntax). Write in plain text only."""
+    - Use the provided context data to give accurate, data-driven answers
+    - Reference specific numbers and metrics when available
+    - Maintain conversation continuity by referencing previous discussions when relevant
+    - Offer non-personalized, data-backed ideas (e.g., notable gainers, profitability leaders) when asked; include a short "not investment advice" disclaimer and balanced risks.
+    - Be conversational and helpful, not robotic
+    - IMPORTANT: Do NOT use markdown formatting (no **bold**, *italic*, or other markdown syntax). Write in plain text only."""
         
         if context_parts:
             system_content += "\n\nContext:\n" + "\n".join(f"- {part}" for part in context_parts)
@@ -470,5 +708,17 @@ Summary:"""
             return response.content if hasattr(response, 'content') else str(response)
         except Exception as e:
             error_msg = str(e)
-            print(f"Error in chat_response: {error_msg}")
+            print(f"[AI_SERVICE] Error in chat_response: {error_msg}", flush=True)
+            
+            # Check for quota/rate limit errors
+            if "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                return "I apologize, but I've reached my API quota limit. Please check your Gemini API billing plan or try again later. You can still use watchlist and stock data features."
+            
             return f"Error generating response: {error_msg}"
+
+
+
+
+
+
+
