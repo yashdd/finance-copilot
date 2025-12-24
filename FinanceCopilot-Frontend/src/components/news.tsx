@@ -1,9 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '@/lib/api-client'
 import { Newspaper, ExternalLink, Clock, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
-import { API_BASE } from '@/lib/api-config'
 
 interface NewsItem {
   id?: number
@@ -33,15 +32,14 @@ export function News() {
 
   const fetchLatestNews = async () => {
     try {
-      const url = `${API_BASE}/news/general?category=finance`
-      console.log('📡 Fetching latest finance news from:', url)
-      const res = await axios.get(url, {
+      console.log('Fetching latest finance news')
+      const res = await apiClient.get('/news/general?category=finance', {
         timeout: 10000
       })
-      console.log('✅ Latest news response:', res.data)
+      console.log('Latest news response:', res.data)
       setLatestNews((res.data || []).slice(0, 5)) // Limit to 5 items
     } catch (error: any) {
-      console.error('❌ Error fetching latest news:', error)
+      console.error('Error fetching latest news:', error)
       setLatestNews([])
     }
   }
@@ -58,18 +56,38 @@ export function News() {
         return
       }
 
-      // Fetch company news for each symbol in watchlist
-      const symbols = watchlist.map(item => item.symbol)
-      console.log('📡 Fetching watchlist news for symbols:', symbols)
+      // Fetch company news for each item in watchlist (using both symbol and name)
+      console.log('Fetching watchlist news for items:', watchlist.map(item => ({ symbol: item.symbol, name: item.name })))
       
-      const newsPromises = symbols.map(symbol =>
-        axios.get(`${API_BASE}/news/company/${symbol}`, {
+      const newsPromises = watchlist.map(item => {
+        // Try symbol first, then fallback to company name if symbol fails
+        const symbolPromise = apiClient.get(`/news/company/${item.symbol}`, {
           timeout: 8000
         }).catch(err => {
-          console.warn(`Failed to fetch news for ${symbol}:`, err)
+          console.warn(`Failed to fetch news for symbol ${item.symbol}:`, err)
+          return null // Return null to indicate failure
+        })
+        
+        // If symbol fails and we have a company name, try searching by name
+        return symbolPromise.then(result => {
+          if (result && result.data && result.data.length > 0) {
+            return result
+          } else if (item.name && item.name.trim()) {
+            // Fallback to company name search
+            return apiClient.get(`/news/company-name/${encodeURIComponent(item.name)}`, {
+              timeout: 8000
+            }).catch(err => {
+              console.warn(`Failed to fetch news for company name ${item.name}:`, err)
+              return { data: [] } // Return empty array on error
+            })
+          } else {
+            return { data: [] } // Return empty array if no name available
+          }
+        }).catch(err => {
+          console.warn(`Failed to fetch news for ${item.symbol}/${item.name}:`, err)
           return { data: [] } // Return empty array on error
         })
-      )
+      })
 
       const newsResults = await Promise.all(newsPromises)
       
@@ -78,14 +96,14 @@ export function News() {
       const seenUrls = new Set<string>()
       
       newsResults.forEach((result, index) => {
-        const symbol = symbols[index]
+        const item = watchlist[index]
         const newsItems: NewsItem[] = result.data || []
         
-        newsItems.forEach(item => {
+        newsItems.forEach(newsItem => {
           // Deduplicate by URL
-          if (!seenUrls.has(item.url)) {
-            seenUrls.add(item.url)
-            allNews.push(item)
+          if (!seenUrls.has(newsItem.url)) {
+            seenUrls.add(newsItem.url)
+            allNews.push(newsItem)
           }
         })
       })
@@ -95,10 +113,10 @@ export function News() {
         .sort((a, b) => b.published_at - a.published_at)
         .slice(0, 5)
 
-      console.log('✅ Watchlist news response:', sortedNews)
+      console.log('Watchlist news response:', sortedNews)
       setWatchlistNews(sortedNews)
     } catch (error: any) {
-      console.error('❌ Error fetching watchlist news:', error)
+      console.error('Error fetching watchlist news:', error)
       setWatchlistNews([])
     }
   }
@@ -198,7 +216,7 @@ export function News() {
           </div>
         ) : error ? (
           <div className="text-center py-4">
-            <p className="text-xs lg:text-sm text-red-600 font-medium mb-1">⚠️ {error}</p>
+            <p className="text-xs lg:text-sm text-red-600 font-medium mb-1">Warning: {error}</p>
             <p className="text-xs lg:text-sm text-red-500">Check if backend is running</p>
           </div>
         ) : currentNews.length === 0 ? (

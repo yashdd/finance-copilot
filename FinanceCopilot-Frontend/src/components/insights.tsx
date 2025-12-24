@@ -238,12 +238,18 @@ export function Insights() {
                   {insight.symbol}
                 </span>
                 <span className="text-xs lg:text-sm text-gray-500">
-                  {new Date(insight.generated_at).toLocaleTimeString()}
+                  {new Date(insight.generated_at).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
                 </span>
               </div>
               {insight.key_points && insight.key_points.length > 0 && (
                 <div className="space-y-1">
-                  {insight.key_points.slice(0, 3).map((point, i) => (
+                  {insight.key_points.slice(0, 5).map((point, i) => (
                     <div key={i} className="text-xs lg:text-sm text-gray-700 flex items-start gap-1.5">
                       <div className="w-1 h-1 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0"></div>
                       <span className="leading-relaxed">{point}</span>

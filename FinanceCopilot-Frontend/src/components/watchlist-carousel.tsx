@@ -21,12 +21,12 @@ export function WatchlistCarousel() {
   const fetchWatchlist = async () => {
     try {
       setError(null)
-      console.log('📡 Fetching watchlist from:', `${API_BASE}/watchlist/all`)
+      console.log('Fetching watchlist from:', `${API_BASE}/watchlist/all`)
       const res = await apiClient.get('/watchlist/all')
-      console.log('✅ Watchlist response:', res.data)
+      console.log('Watchlist response:', res.data)
       setItems(res.data || [])
     } catch (error: any) {
-      console.error('❌ Error fetching watchlist:', error)
+      console.error('Error fetching watchlist:', error)
       console.error('   URL attempted:', `${API_BASE}/watchlist/all`)
       if (error.response) {
         console.error('   Response status:', error.response.status)
@@ -85,7 +85,7 @@ export function WatchlistCarousel() {
         </div>
         <div className="h-24 bg-red-50 rounded-lg border border-red-200 flex items-center justify-center">
           <div className="text-center">
-            <p className="text-xs lg:text-sm text-red-600 font-medium mb-1">⚠️ {error}</p>
+            <p className="text-xs lg:text-sm text-red-600 font-medium mb-1">Warning: {error}</p>
             <p className="text-xs lg:text-sm text-red-500">Check if backend is running on {apiUrl.host}</p>
           </div>
         </div>

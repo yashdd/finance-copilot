@@ -1,8 +1,7 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import axios from 'axios'
+import apiClient from '@/lib/api-client'
 import { Send, Bot, User, Loader2, X, MessageCircle } from 'lucide-react'
-import { API_BASE } from '@/lib/api-config'
 
 // Strip markdown formatting from text
 const stripMarkdown = (text: string): string => {
@@ -26,6 +25,8 @@ interface Message {
   timestamp?: string
 }
 
+const CURRENT_SESSION_KEY = 'current_chat_session_id'
+
 export function Chat() {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
@@ -36,6 +37,8 @@ export function Chat() {
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [loadingSession, setLoadingSession] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -48,6 +51,54 @@ export function Chat() {
     }
   }, [messages, isOpen])
 
+  // Load current session when chat opens
+  useEffect(() => {
+    if (isOpen) {
+      loadCurrentSession()
+    } else {
+      // Reset to welcome message when closed
+      setMessages([
+        {
+          role: 'assistant',
+          content: 'Hello! I\'m FinanceCopilot. Ask me anything about stocks, investing, or finance!'
+        }
+      ])
+    }
+  }, [isOpen])
+
+  const loadCurrentSession = async () => {
+    setLoadingSession(true)
+    try {
+      const res = await apiClient.get('/chatbot/session/current')
+      const sessionId = res.data.session.id
+      setSessionId(sessionId)
+      const sessionMessages = res.data.messages || []
+      if (sessionMessages.length > 0) {
+        setMessages(sessionMessages.map((msg: any) => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        })))
+      } else {
+        // Show welcome message if no messages
+        setMessages([
+          {
+            role: 'assistant',
+            content: 'Hello! I\'m FinanceCopilot. Ask me anything about stocks, investing, or finance!'
+          }
+        ])
+      }
+      // Store in localStorage for syncing with chat page
+      localStorage.setItem(CURRENT_SESSION_KEY, sessionId)
+    } catch (error) {
+      console.error('Error loading current session:', error)
+      setSessionId(null)
+      localStorage.removeItem(CURRENT_SESSION_KEY)
+    } finally {
+      setLoadingSession(false)
+    }
+  }
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return
 
@@ -57,28 +108,52 @@ export function Chat() {
     }
 
     setMessages([...messages, userMessage])
+    const currentInput = input
     setInput('')
     setLoading(true)
 
     try {
-      const res = await axios.post(`${API_BASE}/chatbot/chat`, {
-        message: input,
-        session_id: null,  // Dashboard chat doesn't use sessions
+      const res = await apiClient.post('/chatbot/chat', {
+        message: currentInput,
+        session_id: sessionId,  // Use existing session or null to create new one
         context: {}
       })
 
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: res.data.content,
-        timestamp: res.data.timestamp
+      // Update session_id if this was a new session
+      if (res.data.session_id && !sessionId) {
+        const newSessionId = res.data.session_id
+        setSessionId(newSessionId)
+        localStorage.setItem(CURRENT_SESSION_KEY, newSessionId)
       }
 
-      setMessages(prev => [...prev, assistantMessage])
-    } catch (error) {
+      // Check if response contains an error message
+      const responseContent = res.data.content || ''
+      if (responseContent.toLowerCase().includes('error') || 
+          responseContent.toLowerCase().includes('quota') ||
+          responseContent.toLowerCase().includes('exceeded') ||
+          responseContent.toLowerCase().includes('429')) {
+        // This is an error response, show it to the user
+        const errorMessage: Message = {
+          role: 'assistant',
+          content: responseContent,
+          timestamp: res.data.timestamp
+        }
+        setMessages(prev => [...prev, errorMessage])
+      } else {
+        // Normal response
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: responseContent,
+          timestamp: res.data.timestamp
+        }
+        setMessages(prev => [...prev, assistantMessage])
+      }
+    } catch (error: any) {
       console.error('Error sending message:', error)
+      const errorDetail = error.response?.data?.detail || error.response?.data?.content || error.message || 'Unknown error'
       const errorMessage: Message = {
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.'
+        content: `Sorry, I encountered an error: ${errorDetail}. Please try again.`
       }
       setMessages(prev => [...prev, errorMessage])
     } finally {
@@ -143,7 +218,12 @@ export function Chat() {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/50">
-            {messages.map((message, idx) => (
+            {loadingSession ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 size={20} className="animate-spin text-emerald-500" />
+              </div>
+            ) : (
+              messages.map((message, idx) => (
               <div
                 key={idx}
                 className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -168,7 +248,7 @@ export function Chat() {
                   </div>
                 )}
               </div>
-            ))}
+            )))}
             {loading && (
               <div className="flex gap-3 justify-start">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-sm">

@@ -1,10 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { Search, TrendingUp, TrendingDown, Activity, BarChart3, LineChart, AreaChart, Filter, Building2, Sparkles, Loader2 } from 'lucide-react'
-import { useSearchParams } from 'next/navigation'
+import apiClient from '@/lib/api-client'
 import { API_BASE } from '@/lib/api-config'
-import { LineChart as RechartsLineChart, AreaChart as RechartsAreaChart, BarChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, Area, Bar, Legend } from 'recharts'
+import { Search, TrendingUp, TrendingDown, Activity, BarChart3, LineChart, AreaChart, Filter, Building2, Sparkles, Loader2, GitCompare, Brain } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { LineChart as RechartsLineChart, AreaChart as RechartsAreaChart, BarChart, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, Area, Bar, Legend, Scatter } from 'recharts'
 
 interface StockQuote {
   symbol: string
@@ -60,7 +61,7 @@ interface CompanyAnalysis {
   ai_summary?: string
 }
 
-type ChartType = 'line' | 'area' | 'candlestick'
+type ChartType = 'line' | 'area' | 'ohlc' | 'candlestick' | 'scatter' | 'composed'
 type TimePeriod = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | 'ALL'
 type Resolution = '1' | '5' | '15' | '30' | '60' | 'D' | 'W' | 'M'
 
@@ -77,11 +78,111 @@ export default function StocksPage() {
   const [analysisLoading, setAnalysisLoading] = useState(false)
   const [showAnalysis, setShowAnalysis] = useState(false)
   
+  // Agentic analysis states
+  const [agenticAnalysis, setAgenticAnalysis] = useState<string | null>(null)
+  const [agenticAnalysisLoading, setAgenticAnalysisLoading] = useState(false)
+  const [agenticAnalysisStatus, setAgenticAnalysisStatus] = useState<string>('')
+  
+  // Comparison states
+  const [compareSymbol1, setCompareSymbol1] = useState('')
+  const [compareSymbol2, setCompareSymbol2] = useState('')
+  const [comparisonResult, setComparisonResult] = useState<string | null>(null)
+  const [comparisonLoading, setComparisonLoading] = useState(false)
+  const [comparisonStatus, setComparisonStatus] = useState<string>('')
+  const [showComparison, setShowComparison] = useState(false)
+  const [symbol2Suggestions, setSymbol2Suggestions] = useState<Array<{symbol: string; description: string}>>([])
+  const [showSymbol2Suggestions, setShowSymbol2Suggestions] = useState(false)
+  const [searchingSymbol2, setSearchingSymbol2] = useState(false)
+  const [symbolSuggestions, setSymbolSuggestions] = useState<Array<{symbol: string; description: string}>>([])
+  const [showSymbolSuggestions, setShowSymbolSuggestions] = useState(false)
+  const [searchingSymbol, setSearchingSymbol] = useState(false)
+  
   // Chart filters
   const [chartType, setChartType] = useState<ChartType>('line')
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1M')
   const [resolution, setResolution] = useState<Resolution>('D')
   const [showVolume, setShowVolume] = useState(true)
+  const [showOHLC, setShowOHLC] = useState(false)
+  const [chartError, setChartError] = useState<string | null>(null)
+
+  // Search for main stock symbol
+  const searchMainSymbols = async (query: string) => {
+    if (!query.trim() || query.length < 1) {
+      setSymbolSuggestions([])
+      setShowSymbolSuggestions(false)
+      return
+    }
+
+    setSearchingSymbol(true)
+    try {
+      const res = await axios.get(`${API_BASE}/stock/search`, {
+        params: { q: query, limit: 8 }
+      })
+      setSymbolSuggestions(res.data)
+      setShowSymbolSuggestions(res.data.length > 0)
+    } catch (error) {
+      console.error('Error searching symbols:', error)
+      setSymbolSuggestions([])
+      setShowSymbolSuggestions(false)
+    } finally {
+      setSearchingSymbol(false)
+    }
+  }
+
+  const handleSymbolInputChange = (value: string) => {
+    setSymbol(value)
+    if (value.trim()) {
+      searchMainSymbols(value)
+    } else {
+      setSymbolSuggestions([])
+      setShowSymbolSuggestions(false)
+    }
+  }
+
+  const selectSymbol = (sym: string) => {
+    setSymbol(sym)
+    setCurrentSymbol(sym.toUpperCase())
+    setShowSymbolSuggestions(false)
+  }
+
+  // Search for company symbols for comparison
+  const searchCompanySymbols = async (query: string) => {
+    if (!query.trim() || query.length < 1) {
+      setSymbol2Suggestions([])
+      setShowSymbol2Suggestions(false)
+      return
+    }
+
+    setSearchingSymbol2(true)
+    try {
+      const res = await axios.get(`${API_BASE}/stock/search`, {
+        params: { q: query, limit: 8 }
+      })
+      setSymbol2Suggestions(res.data)
+      setShowSymbol2Suggestions(res.data.length > 0)
+    } catch (error) {
+      console.error('Error searching symbols:', error)
+      setSymbol2Suggestions([])
+      setShowSymbol2Suggestions(false)
+    } finally {
+      setSearchingSymbol2(false)
+    }
+  }
+
+  const handleSymbol2Change = (value: string) => {
+    setCompareSymbol2(value)
+    if (value.trim()) {
+      searchCompanySymbols(value)
+    } else {
+      setSymbol2Suggestions([])
+      setShowSymbol2Suggestions(false)
+    }
+  }
+
+  const selectSymbol2 = (symbol: string) => {
+    setCompareSymbol2(symbol)
+    setShowSymbol2Suggestions(false)
+  }
 
   const getDaysFromPeriod = (period: TimePeriod): number => {
     switch (period) {
@@ -101,13 +202,15 @@ export default function StocksPage() {
     setLoading(true)
     try {
       const [quoteRes, metricsRes] = await Promise.all([
-        axios.get(`${API_BASE}/stock/quote/${currentSymbol.toUpperCase()}`),
-        axios.get(`${API_BASE}/stock/metrics/${currentSymbol.toUpperCase()}`)
+        apiClient.get(`/stock/quote/${currentSymbol.toUpperCase()}`),
+        apiClient.get(`/stock/metrics/${currentSymbol.toUpperCase()}`)
       ])
       setQuote(quoteRes.data)
       setMetrics(metricsRes.data)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching stock data:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to fetch stock data'
+      console.error('Error details:', errorMsg)
       setQuote(null)
       setMetrics(null)
     } finally {
@@ -118,17 +221,40 @@ export default function StocksPage() {
   const fetchCandleData = async () => {
     if (!currentSymbol.trim()) return
     setChartLoading(true)
+    setChartError(null)
     try {
       const days = getDaysFromPeriod(timePeriod)
-      const res = await axios.get(`${API_BASE}/stock/candle/${currentSymbol.toUpperCase()}`, {
+      
+      // Validate resolution/period combinations
+      const isIntraday = ['1', '5', '15', '30', '60'].includes(resolution)
+      if (isIntraday && days > 30) {
+        // Intraday resolutions typically only support up to 30 days
+        setChartError(`Intraday resolution (${resolution} min) only supports up to 30 days. Please select a shorter time period.`)
+        setCandles([])
+        setChartLoading(false)
+        return
+      }
+      
+      console.log(`Fetching candle data for ${currentSymbol.toUpperCase()}: resolution=${resolution}, days=${days}`)
+      const res = await apiClient.get(`/stock/candle/${currentSymbol.toUpperCase()}`, {
         params: {
           resolution: resolution,
           days: days
         }
       })
+      console.log(`Received ${res.data?.length || 0} candles`)
+      
+      if (!res.data || res.data.length === 0) {
+        setChartError(`No historical data available for ${currentSymbol.toUpperCase()} with these settings.`)
+      } else {
+        setChartError(null)
+      }
       setCandles(res.data || [])
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching candle data:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to fetch chart data'
+      console.error('Error details:', errorMsg)
+      setChartError(errorMsg)
       setCandles([])
     } finally {
       setChartLoading(false)
@@ -139,23 +265,41 @@ export default function StocksPage() {
     fetchStockData()
   }, [currentSymbol])
 
+  // Keep the first comparison symbol locked to the currently viewed symbol
+  useEffect(() => {
+    setCompareSymbol1(currentSymbol)
+  }, [currentSymbol])
+
   useEffect(() => {
     fetchCandleData()
   }, [currentSymbol, timePeriod, resolution])
 
   // Format chart data
-  const chartData = candles.map(candle => ({
-    date: new Date(candle.timestamp * 1000).toLocaleDateString(),
-    time: new Date(candle.timestamp * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-    timestamp: candle.timestamp,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
-    // For candlestick chart
-    value: [candle.open, candle.close, candle.low, candle.high]
-  }))
+  const chartData = candles.map(candle => {
+    const isUp = candle.close >= candle.open
+    return {
+      date: new Date(candle.timestamp * 1000).toLocaleDateString(),
+      time: new Date(candle.timestamp * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+      // For candlestick chart visualization
+      isUp,
+      bodyHigh: Math.max(candle.open, candle.close),
+      bodyLow: Math.min(candle.open, candle.close),
+      // Separate up/down candles for better visualization
+      upBody: isUp ? Math.max(candle.open, candle.close) : null,
+      downBody: !isUp ? Math.min(candle.open, candle.close) : null,
+      upBodyLow: isUp ? Math.min(candle.open, candle.close) : null,
+      downBodyHigh: !isUp ? Math.max(candle.open, candle.close) : null,
+      // Price change
+      change: candle.close - candle.open,
+      changePercent: ((candle.close - candle.open) / candle.open) * 100
+    }
+  })
 
   const handleSearch = () => {
     if (symbol.trim()) {
@@ -171,18 +315,121 @@ export default function StocksPage() {
     return `$${num.toFixed(2)}`
   }
 
+  const fetchProperAnalysis = async () => {
+    if (!currentSymbol.trim()) return
+    setAgenticAnalysisLoading(true)
+    setAgenticAnalysis(null)
+    
+    const statusMessages = [
+      `Initializing thorough analysis for ${currentSymbol.toUpperCase()}...`,
+      `Fetching real-time stock quote and market data...`,
+      `Gathering fundamental metrics and financial ratios...`,
+      `Collecting recent news and market sentiment...`,
+      `Analyzing historical price trends and patterns...`,
+      `Computing valuation metrics and comparisons...`,
+      `Synthesizing comprehensive investment insights...`,
+      `Finalizing detailed analysis report...`
+    ]
+    
+    let statusIndex = 0
+    const statusInterval = setInterval(() => {
+      if (statusIndex < statusMessages.length) {
+        setAgenticAnalysisStatus(statusMessages[statusIndex])
+        statusIndex++
+      }
+    }, 1500)
+    
+    try {
+      const res = await apiClient.post(`/company/analyze-agentic/${currentSymbol.toUpperCase()}`, {}, {
+        timeout: 60000 // 60 seconds for thorough analysis
+      })
+      clearInterval(statusInterval)
+      setAgenticAnalysisStatus('Analysis complete!')
+      setAgenticAnalysis(res.data.analysis)
+    } catch (error: any) {
+      clearInterval(statusInterval)
+      console.error('Error fetching analysis:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to generate analysis'
+      setAgenticAnalysisStatus(`Error: ${errorMsg}`)
+      setAgenticAnalysis(`Error: ${errorMsg}`)
+    } finally {
+      setAgenticAnalysisLoading(false)
+      setTimeout(() => setAgenticAnalysisStatus(''), 3000)
+    }
+  }
+
   const fetchCompanyAnalysis = async () => {
     if (!currentSymbol.trim()) return
     setAnalysisLoading(true)
     setShowAnalysis(true)
     try {
-      const res = await axios.get(`${API_BASE}/company/analysis/${currentSymbol.toUpperCase()}`)
+      const res = await apiClient.get(`/company/analysis/${currentSymbol.toUpperCase()}`)
       setCompanyAnalysis(res.data)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching company analysis:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to fetch analysis'
+      console.error('Error details:', errorMsg)
       setCompanyAnalysis(null)
     } finally {
       setAnalysisLoading(false)
+    }
+  }
+
+  const fetchAgenticAnalysis = async () => {
+    // Deprecated: use fetchProperAnalysis instead
+    fetchProperAnalysis()
+  }
+
+  const fetchComparison = async () => {
+    if (!compareSymbol2.trim()) return
+    setComparisonLoading(true)
+    setComparisonResult(null)
+    setShowComparison(true)
+    
+    const symbol1Upper = currentSymbol.toUpperCase()
+    const symbol2Upper = compareSymbol2.toUpperCase()
+    
+    const statusMessages = [
+      'Initializing AI agent for comparison...',
+      `Fetching ${symbol1Upper} real-time data...`,
+      `Fetching ${symbol2Upper} real-time data...`,
+      `Gathering ${symbol1Upper} fundamental metrics...`,
+      `Gathering ${symbol2Upper} fundamental metrics...`,
+      'Collecting news for both companies...',
+      'Analyzing price trends...',
+      'Comparing financial metrics...',
+      'Synthesizing comprehensive comparison...',
+      'Finalizing insights...'
+    ]
+    
+    let statusIndex = 0
+    const statusInterval = setInterval(() => {
+      if (statusIndex < statusMessages.length) {
+        setComparisonStatus(statusMessages[statusIndex])
+        statusIndex++
+      }
+    }, 2000)
+    
+    try {
+      const res = await apiClient.post('/company/compare', null, {
+        params: {
+          symbol1: symbol1Upper,
+          symbol2: symbol2Upper
+        },
+        timeout: 60000 // 60 seconds for agentic operations
+      })
+      clearInterval(statusInterval)
+      setComparisonStatus('Comparison complete!')
+      setComparisonResult(res.data.comparison)
+    } catch (error: any) {
+      clearInterval(statusInterval)
+      console.error('Error fetching comparison:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to generate comparison'
+      setComparisonStatus(`Error: ${errorMsg}`)
+      setComparisonResult(`Error: ${errorMsg}`)
+    } finally {
+      setComparisonLoading(false)
+      setTimeout(() => setComparisonStatus(''), 3000)
     }
   }
 
@@ -206,11 +453,29 @@ export default function StocksPage() {
               <input
                 type="text"
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
+                onChange={(e) => handleSymbolInputChange(e.target.value)}
+                onFocus={() => symbol.trim() && setShowSymbolSuggestions(symbolSuggestions.length > 0)}
                 placeholder="Enter stock symbol (e.g., AAPL)"
                 className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
               />
+              {showSymbolSuggestions && (
+                <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg mt-1 z-10 max-h-60 overflow-y-auto">
+                  {symbolSuggestions.map((s) => (
+                    <button
+                      key={s.symbol}
+                      onClick={() => selectSymbol(s.symbol)}
+                      className="w-full text-left px-4 py-2 hover:bg-emerald-50 border-b border-gray-100 last:border-b-0 transition-colors"
+                    >
+                      <div className="font-semibold text-gray-900">{s.symbol}</div>
+                      <div className="text-xs text-gray-500">{s.description}</div>
+                    </button>
+                  ))}
+                  {symbolSuggestions.length === 0 && searchingSymbol && (
+                    <div className="px-4 py-3 text-sm text-gray-500">Searching...</div>
+                  )}
+                </div>
+              )}
             </div>
             <button
               onClick={handleSearch}
@@ -286,39 +551,61 @@ export default function StocksPage() {
                   {/* Chart Filters */}
                   <div className="flex flex-wrap gap-2">
                     {/* Chart Type */}
-                    <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                    <div className="flex gap-1 bg-gray-100 rounded-lg p-1 flex-wrap">
                       <button
                         onClick={() => setChartType('line')}
-                        className={`px-3 py-1.5 rounded-md text-xs lg:text-sm font-medium transition-all ${
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
                           chartType === 'line'
                             ? 'bg-white text-emerald-600 shadow-sm'
                             : 'text-gray-600 hover:text-gray-900'
                         }`}
                         title="Line Chart"
                       >
-                        <LineChart size={14} className="inline-block" />
+                        <LineChart size={12} className="inline-block" />
                       </button>
                       <button
                         onClick={() => setChartType('area')}
-                        className={`px-3 py-1.5 rounded-md text-xs lg:text-sm font-medium transition-all ${
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
                           chartType === 'area'
                             ? 'bg-white text-emerald-600 shadow-sm'
                             : 'text-gray-600 hover:text-gray-900'
                         }`}
                         title="Area Chart"
                       >
-                        <AreaChart size={14} className="inline-block" />
+                        <AreaChart size={12} className="inline-block" />
+                      </button>
+                      <button
+                        onClick={() => setChartType('ohlc')}
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          chartType === 'ohlc'
+                            ? 'bg-white text-emerald-600 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="OHLC Bars"
+                      >
+                        <BarChart3 size={12} className="inline-block" />
                       </button>
                       <button
                         onClick={() => setChartType('candlestick')}
-                        className={`px-3 py-1.5 rounded-md text-xs lg:text-sm font-medium transition-all ${
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
                           chartType === 'candlestick'
                             ? 'bg-white text-emerald-600 shadow-sm'
                             : 'text-gray-600 hover:text-gray-900'
                         }`}
-                        title="Candlestick Chart"
+                        title="Candlestick"
                       >
-                        <BarChart3 size={14} className="inline-block" />
+                        <Activity size={12} className="inline-block" />
+                      </button>
+                      <button
+                        onClick={() => setChartType('composed')}
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          chartType === 'composed'
+                            ? 'bg-white text-emerald-600 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                        title="Composed Chart"
+                      >
+                        <Filter size={12} className="inline-block" />
                       </button>
                     </div>
 
@@ -373,8 +660,49 @@ export default function StocksPage() {
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
                   </div>
                 ) : chartData.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
-                    No chart data available
+                  <div className="h-64 flex flex-col items-center justify-center text-gray-400 text-sm gap-3">
+                    <BarChart3 size={32} className="text-gray-300" />
+                    <p className="font-medium">No chart data available</p>
+                    {chartError && (
+                      <p className="text-xs text-red-500 text-center px-4 max-w-md bg-red-50 p-2 rounded-lg">
+                        {chartError}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400 text-center px-4 max-w-md">
+                      Try adjusting the time period or resolution. Some symbols may not have historical data for certain periods.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2 justify-center">
+                      <button
+                        onClick={() => {
+                          setTimePeriod('1M')
+                          setResolution('D')
+                          setChartError(null)
+                        }}
+                        className="px-3 py-1.5 text-xs bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+                      >
+                        Try 1 Month Daily
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTimePeriod('1Y')
+                          setResolution('W')
+                          setChartError(null)
+                        }}
+                        className="px-3 py-1.5 text-xs bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+                      >
+                        Try 1 Year Weekly
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTimePeriod('3M')
+                          setResolution('D')
+                          setChartError(null)
+                        }}
+                        className="px-3 py-1.5 text-xs bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+                      >
+                        Try 3 Months Daily
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="h-80 lg:h-96">
@@ -492,6 +820,232 @@ export default function StocksPage() {
                             />
                           )}
                         </RechartsAreaChart>
+                      ) : chartType === 'ohlc' ? (
+                        <ComposedChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis 
+                            dataKey={resolution === 'D' || resolution === 'W' || resolution === 'M' ? 'date' : 'time'}
+                            stroke="#6b7280"
+                            fontSize={12}
+                          />
+                          <YAxis 
+                            yAxisId="price"
+                            stroke="#6b7280"
+                            fontSize={12}
+                            domain={['auto', 'auto']}
+                          />
+                          {showVolume && (
+                            <YAxis 
+                              yAxisId="volume"
+                              orientation="right"
+                              stroke="#9ca3af"
+                              fontSize={12}
+                            />
+                          )}
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'white', 
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              fontSize: '12px'
+                            }}
+                            formatter={(value: any, name: string) => {
+                              if (name === 'volume') {
+                                return [value.toLocaleString(), 'Volume']
+                              }
+                              return [`$${Number(value).toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]
+                            }}
+                          />
+                          <Legend />
+                          <Bar yAxisId="price" dataKey="high" fill="#10b981" name="High" />
+                          <Bar yAxisId="price" dataKey="low" fill="#ef4444" name="Low" />
+                          <Bar yAxisId="price" dataKey="open" fill="#3b82f6" name="Open" />
+                          <Bar yAxisId="price" dataKey="close" fill="#10b981" name="Close" />
+                          {showVolume && (
+                            <Bar 
+                              yAxisId="volume"
+                              dataKey="volume" 
+                              fill="#d1d5db" 
+                              opacity={0.3}
+                              name="Volume"
+                            />
+                          )}
+                        </ComposedChart>
+                      ) : chartType === 'candlestick' ? (
+                        <ComposedChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis 
+                            dataKey={resolution === 'D' || resolution === 'W' || resolution === 'M' ? 'date' : 'time'}
+                            stroke="#6b7280"
+                            fontSize={12}
+                          />
+                          <YAxis 
+                            yAxisId="price"
+                            stroke="#6b7280"
+                            fontSize={12}
+                            domain={['auto', 'auto']}
+                          />
+                          {showVolume && (
+                            <YAxis 
+                              yAxisId="volume"
+                              orientation="right"
+                              stroke="#9ca3af"
+                              fontSize={12}
+                            />
+                          )}
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'white', 
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              fontSize: '12px'
+                            }}
+                            formatter={(value: any, name: string) => {
+                              if (name === 'volume') {
+                                return [value.toLocaleString(), 'Volume']
+                              }
+                              return [`$${Number(value).toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]
+                            }}
+                          />
+                          <Legend />
+                          {/* Candlestick visualization: High-Low wicks and body bars */}
+                          <Line yAxisId="price" type="monotone" dataKey="high" stroke="#6b7280" strokeWidth={1} dot={false} name="High" />
+                          <Line yAxisId="price" type="monotone" dataKey="low" stroke="#6b7280" strokeWidth={1} dot={false} name="Low" />
+                          {/* Up candles (green) */}
+                          <Bar yAxisId="price" dataKey="upBody" fill="#10b981" name="Up" />
+                          <Bar yAxisId="price" dataKey="upBodyLow" fill="#10b981" name="" />
+                          {/* Down candles (red) */}
+                          <Bar yAxisId="price" dataKey="downBody" fill="#ef4444" name="Down" />
+                          <Bar yAxisId="price" dataKey="downBodyHigh" fill="#ef4444" name="" />
+                          {showVolume && (
+                            <Bar 
+                              yAxisId="volume"
+                              dataKey="volume" 
+                              fill="#d1d5db" 
+                              opacity={0.3}
+                              name="Volume"
+                            />
+                          )}
+                        </ComposedChart>
+                      ) : chartType === 'composed' ? (
+                        <ComposedChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis 
+                            dataKey={resolution === 'D' || resolution === 'W' || resolution === 'M' ? 'date' : 'time'}
+                            stroke="#6b7280"
+                            fontSize={12}
+                          />
+                          <YAxis 
+                            yAxisId="price"
+                            stroke="#6b7280"
+                            fontSize={12}
+                            domain={['auto', 'auto']}
+                          />
+                          {showVolume && (
+                            <YAxis 
+                              yAxisId="volume"
+                              orientation="right"
+                              stroke="#9ca3af"
+                              fontSize={12}
+                            />
+                          )}
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'white', 
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              fontSize: '12px'
+                            }}
+                            formatter={(value: any, name: string) => {
+                              if (name === 'volume') {
+                                return [value.toLocaleString(), 'Volume']
+                              }
+                              return [`$${Number(value).toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]
+                            }}
+                          />
+                          <Legend />
+                          <Area 
+                            yAxisId="price"
+                            type="monotone" 
+                            dataKey="close" 
+                            fill="#10b981"
+                            fillOpacity={0.2}
+                            stroke="#10b981"
+                            strokeWidth={2}
+                            name="Close Price"
+                          />
+                          <Line 
+                            yAxisId="price"
+                            type="monotone" 
+                            dataKey="high" 
+                            stroke="#3b82f6" 
+                            strokeWidth={1}
+                            strokeDasharray="3 3"
+                            dot={false}
+                            name="High"
+                          />
+                          <Line 
+                            yAxisId="price"
+                            type="monotone" 
+                            dataKey="low" 
+                            stroke="#ef4444" 
+                            strokeWidth={1}
+                            strokeDasharray="3 3"
+                            dot={false}
+                            name="Low"
+                          />
+                          {showVolume && (
+                            <Bar 
+                              yAxisId="volume"
+                              dataKey="volume" 
+                              fill="#d1d5db" 
+                              opacity={0.4}
+                              name="Volume"
+                            />
+                          )}
+                        </ComposedChart>
+                      ) : chartType === 'scatter' ? (
+                        <RechartsLineChart data={chartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                          <XAxis 
+                            dataKey={resolution === 'D' || resolution === 'W' || resolution === 'M' ? 'date' : 'time'}
+                            stroke="#6b7280"
+                            fontSize={12}
+                          />
+                          <YAxis 
+                            yAxisId="price"
+                            stroke="#6b7280"
+                            fontSize={12}
+                            domain={['auto', 'auto']}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'white', 
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              fontSize: '12px'
+                            }}
+                            formatter={(value: any, name: string) => {
+                              return [`$${Number(value).toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]
+                            }}
+                          />
+                          <Legend />
+                          <Scatter 
+                            yAxisId="price"
+                            dataKey="close" 
+                            fill="#10b981"
+                            name="Close"
+                          />
+                          <Line 
+                            yAxisId="price"
+                            type="monotone" 
+                            dataKey="close" 
+                            stroke="#10b981" 
+                            strokeWidth={1}
+                            dot={false}
+                            name="Trend"
+                          />
+                        </RechartsLineChart>
                       ) : (
                         <BarChart data={chartData}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -561,23 +1115,25 @@ export default function StocksPage() {
                     <Activity size={20} className="text-emerald-500" />
                     Fundamental Metrics
                   </h3>
-                  <button
-                    onClick={fetchCompanyAnalysis}
-                    disabled={analysisLoading}
-                    className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl text-sm lg:text-base font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm shadow-emerald-500/30"
-                  >
-                    {analysisLoading ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <Building2 size={16} />
-                        Company Analysis
-                      </>
-                    )}
-                  </button>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={fetchProperAnalysis}
+                      disabled={agenticAnalysisLoading}
+                      className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white rounded-xl text-sm lg:text-base font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm shadow-purple-500/30"
+                    >
+                      {agenticAnalysisLoading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <Brain size={16} />
+                          Proper Analysis
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {metrics.pe_ratio && (
@@ -632,6 +1188,138 @@ export default function StocksPage() {
               </div>
             )}
 
+            {/* Agentic AI Analysis Section */}
+            {agenticAnalysis !== null && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
+                    <Brain size={18} className="text-white" />
+                  </div>
+                  <h3 className="text-lg lg:text-xl font-semibold text-gray-800">AI Agentic Deep Analysis</h3>
+                </div>
+
+                {agenticAnalysisLoading ? (
+                  <div className="text-center py-8">
+                    <Loader2 size={32} className="animate-spin text-purple-500 mx-auto mb-4" />
+                    <p className="text-gray-600 lg:text-lg font-medium mb-2">AI agent is analyzing {currentSymbol}...</p>
+                    {agenticAnalysisStatus && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mt-4 max-w-md mx-auto">
+                        <p className="text-sm text-purple-700 animate-pulse">{agenticAnalysisStatus}</p>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 mt-4">This may take 30-60 seconds as the AI fetches real-time data</p>
+                  </div>
+                ) : agenticAnalysis ? (
+                  <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-6 border border-purple-200">
+                    <div className="prose prose-sm max-w-none">
+                      <p className="text-sm lg:text-base text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        {agenticAnalysis}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* Company Comparison Section */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-lg flex items-center justify-center shadow-sm">
+                  <GitCompare size={18} className="text-white" />
+                </div>
+                <h3 className="text-lg lg:text-xl font-semibold text-gray-800">Compare Companies</h3>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">First Company (current)</label>
+                    <input
+                      type="text"
+                      value={currentSymbol}
+                      readOnly
+                      className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Second Company</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={compareSymbol2}
+                        onChange={(e) => handleSymbol2Change(e.target.value)}
+                        onFocus={() => compareSymbol2.trim() && setShowSymbol2Suggestions(symbol2Suggestions.length > 0)}
+                        placeholder="e.g., MSFT"
+                        className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      {showSymbol2Suggestions && (
+                        <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg mt-1 z-10 max-h-48 overflow-y-auto">
+                          {symbol2Suggestions.map((suggestion) => (
+                            <button
+                              key={suggestion.symbol}
+                              onClick={() => selectSymbol2(suggestion.symbol)}
+                              className="w-full text-left px-4 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-b-0 transition-colors"
+                            >
+                              <div className="font-medium text-gray-900">{suggestion.symbol}</div>
+                              <div className="text-xs text-gray-500">{suggestion.description}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={fetchComparison}
+                  disabled={comparisonLoading || !compareSymbol2.trim()}
+                  className="w-full px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm shadow-blue-500/30"
+                >
+                  {comparisonLoading ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Comparing...
+                    </>
+                  ) : (
+                    <>
+                      <GitCompare size={18} />
+                      Compare Companies
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {comparisonLoading && (
+                <div className="mt-6 text-center py-8 bg-blue-50 rounded-xl border border-blue-200">
+                  <Loader2 size={32} className="animate-spin text-blue-500 mx-auto mb-4" />
+                  <p className="text-gray-600 lg:text-lg font-medium mb-2">
+                    Comparing {compareSymbol1.toUpperCase()} vs {compareSymbol2.toUpperCase()}...
+                  </p>
+                  {comparisonStatus && (
+                    <div className="bg-white border border-blue-200 rounded-lg p-4 mt-4 max-w-md mx-auto">
+                      <p className="text-sm text-blue-700 animate-pulse">{comparisonStatus}</p>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-4">This may take 30-60 seconds as the AI fetches data for both companies</p>
+                </div>
+              )}
+
+              {showComparison && comparisonResult && !comparisonLoading && (
+                <div className="mt-6 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-6 border border-blue-200">
+                  <div className="flex items-center gap-2 mb-4">
+                    <GitCompare size={18} className="text-blue-600" />
+                    <h4 className="text-base lg:text-lg font-semibold text-gray-800">
+                      {compareSymbol1.toUpperCase()} vs {compareSymbol2.toUpperCase()}
+                    </h4>
+                  </div>
+                  <div className="prose prose-sm max-w-none">
+                    <p className="text-sm lg:text-base text-gray-700 leading-relaxed whitespace-pre-wrap">
+                      {comparisonResult}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Company Analysis Section */}
             {showAnalysis && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -639,7 +1327,7 @@ export default function StocksPage() {
                   <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center shadow-sm">
                     <Building2 size={18} className="text-white" />
                   </div>
-                  <h3 className="text-lg lg:text-xl font-semibold text-gray-800">AI Company Analysis</h3>
+                  <h3 className="text-lg lg:text-xl font-semibold text-gray-800">Quick Company Analysis</h3>
                 </div>
 
                 {analysisLoading ? (

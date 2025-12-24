@@ -1,8 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
-import axios from 'axios'
-import { Plus, Trash2, TrendingUp, TrendingDown } from 'lucide-react'
-import { API_BASE } from '@/lib/api-config'
+import { useState, useEffect, useRef } from 'react'
+import apiClient from '@/lib/api-client'
+import { Plus, Trash2, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
 
 interface WatchlistItem {
   symbol: string
@@ -12,15 +11,28 @@ interface WatchlistItem {
   added_at: string
 }
 
+interface SymbolSuggestion {
+  symbol: string
+  description: string
+  type?: string
+  displaySymbol?: string
+}
+
 export function Watchlist() {
   const [items, setItems] = useState<WatchlistItem[]>([])
   const [loading, setLoading] = useState(true)
   const [newSymbol, setNewSymbol] = useState('')
   const [newName, setNewName] = useState('')
+  const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const symbolInputRef = useRef<HTMLInputElement>(null)
+  const suggestionsRef = useRef<HTMLDivElement>(null)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchWatchlist = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/watchlist/all`)
+      const res = await apiClient.get('/watchlist/all')
       setItems(res.data)
     } catch (error: any) {
       console.error('Error fetching watchlist:', error)
@@ -36,21 +48,90 @@ export function Watchlist() {
     }
   }
 
+  const searchSymbols = async (query: string) => {
+    if (!query.trim() || query.length < 1) {
+      setSuggestions([])
+      setShowSuggestions(false)
+      return
+    }
+
+    setSearching(true)
+    try {
+      const res = await apiClient.get('/stock/search', {
+        params: { q: query, limit: 8 }
+      })
+      setSuggestions(res.data)
+      setShowSuggestions(res.data.length > 0)
+    } catch (error) {
+      console.error('Error searching symbols:', error)
+      setSuggestions([])
+      setShowSuggestions(false)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleSymbolChange = (value: string) => {
+    setNewSymbol(value)
+    
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    // Debounce API calls - wait 300ms after user stops typing
+    if (value.trim().length >= 1) {
+      searchTimeoutRef.current = setTimeout(() => {
+        searchSymbols(value)
+      }, 300)
+    } else {
+      setSuggestions([])
+      setShowSuggestions(false)
+    }
+  }
+
+  const selectSuggestion = (suggestion: SymbolSuggestion) => {
+    const symbol = suggestion.displaySymbol || suggestion.symbol
+    setNewSymbol(symbol)
+    setNewName(suggestion.description || '')
+    setShowSuggestions(false)
+    symbolInputRef.current?.blur()
+  }
+
   useEffect(() => {
     fetchWatchlist()
     const interval = setInterval(fetchWatchlist, 30000) // Refresh every 30s
     return () => clearInterval(interval)
   }, [])
 
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        symbolInputRef.current &&
+        !symbolInputRef.current.contains(event.target as Node) &&
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(event.target as Node)
+      ) {
+        setShowSuggestions(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const addToWatchlist = async () => {
     if (!newSymbol.trim()) return
     try {
-      await axios.post(`${API_BASE}/watchlist/add`, {
-        symbol: newSymbol.toUpperCase(),
-        name: newName || newSymbol.toUpperCase()
+      await apiClient.post('/watchlist/add', {
+        symbol: newSymbol.toUpperCase().trim(),
+        name: newName.trim() || newSymbol.toUpperCase().trim()
       })
       setNewSymbol('')
       setNewName('')
+      setSuggestions([])
+      setShowSuggestions(false)
       fetchWatchlist()
     } catch (error) {
       console.error('Error adding to watchlist:', error)
@@ -59,7 +140,7 @@ export function Watchlist() {
 
   const removeFromWatchlist = async (symbol: string) => {
     try {
-      await axios.delete(`${API_BASE}/watchlist/remove/${symbol}`)
+      await apiClient.delete(`/watchlist/remove/${symbol}`)
       fetchWatchlist()
     } catch (error) {
       console.error('Error removing from watchlist:', error)
@@ -85,14 +166,58 @@ export function Watchlist() {
       </div>
 
       <div className="mb-3 space-y-2">
-        <input
-          type="text"
-          value={newSymbol}
-          onChange={(e) => setNewSymbol(e.target.value)}
-          placeholder="Symbol (e.g., AAPL)"
-          className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-sm"
-          onKeyPress={(e) => e.key === 'Enter' && addToWatchlist()}
-        />
+        <div className="relative">
+          <input
+            ref={symbolInputRef}
+            type="text"
+            value={newSymbol}
+            onChange={(e) => handleSymbolChange(e.target.value)}
+            onFocus={() => newSymbol.trim().length > 0 && suggestions.length > 0 && setShowSuggestions(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (showSuggestions && suggestions.length > 0) {
+                  selectSuggestion(suggestions[0])
+                } else {
+                  addToWatchlist()
+                }
+              } else if (e.key === 'Escape') {
+                setShowSuggestions(false)
+              }
+            }}
+            placeholder="Symbol (e.g., AAPL)"
+            className="w-full px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-sm"
+          />
+          
+          {/* Suggestions Dropdown */}
+          {showSuggestions && (suggestions.length > 0 || searching) && (
+            <div
+              ref={suggestionsRef}
+              className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto"
+            >
+              {searching ? (
+                <div className="p-3 text-center text-gray-500 text-sm flex items-center justify-center gap-2">
+                  <Loader2 size={16} className="animate-spin" />
+                  Searching...
+                </div>
+              ) : (
+                suggestions.map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => selectSuggestion(suggestion)}
+                    className="w-full px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0"
+                  >
+                    <div className="font-medium text-gray-900 text-sm">
+                      {suggestion.displaySymbol || suggestion.symbol}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {suggestion.description}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <input
           type="text"
           value={newName}

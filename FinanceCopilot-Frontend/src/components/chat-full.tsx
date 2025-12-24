@@ -1,8 +1,7 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import axios from 'axios'
-import { Send, Bot, User, Loader2, Sparkles, Plus } from 'lucide-react'
-import { API_BASE } from '@/lib/api-config'
+import apiClient from '@/lib/api-client'
+import { Send, Bot, User, Loader2, Sparkles, Trash2 } from 'lucide-react'
 
 // Strip markdown formatting from text
 const stripMarkdown = (text: string): string => {
@@ -26,20 +25,13 @@ interface Message {
   timestamp?: string
 }
 
-interface ChatSession {
-  id: string
-  title?: string
-  created_at: string
-  updated_at: string
-  message_count: number
-}
+const CURRENT_SESSION_KEY = 'current_chat_session_id'
 
 export function ChatFull() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [sessions, setSessions] = useState<ChatSession[]>([])
   const [loadingSession, setLoadingSession] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -56,47 +48,41 @@ export function ChatFull() {
     inputRef.current?.focus()
   }, [])
 
-  // Load sessions on mount
+  // Load current session on mount
   useEffect(() => {
-    loadSessions()
+    loadCurrentSession()
   }, [])
 
-  // Load session messages if sessionId exists
-  useEffect(() => {
-    if (sessionId) {
-      loadSessionMessages(sessionId)
-    }
-  }, [sessionId])
-
-  const loadSessions = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/chatbot/sessions`)
-      setSessions(res.data)
-    } catch (error) {
-      console.error('Error loading sessions:', error)
-    }
-  }
-
-  const loadSessionMessages = async (sid: string) => {
+  const loadCurrentSession = async () => {
     setLoadingSession(true)
     try {
-      const res = await axios.get(`${API_BASE}/chatbot/sessions/${sid}`)
+      const res = await apiClient.get('/chatbot/session/current')
+      const sessionId = res.data.session.id
+      setSessionId(sessionId)
       setMessages(res.data.messages || [])
+      // Store in localStorage for syncing with home page chat
+      localStorage.setItem(CURRENT_SESSION_KEY, sessionId)
     } catch (error) {
-      console.error('Error loading session messages:', error)
+      console.error('Error loading current session:', error)
     } finally {
       setLoadingSession(false)
     }
   }
 
-  const createNewSession = async () => {
+  const clearChat = async () => {
+    if (!sessionId) return
+    
     try {
-      const res = await axios.post(`${API_BASE}/chatbot/sessions`)
-      setSessionId(res.data.id)
-      setMessages([])
-      await loadSessions()
+      // Delete current session
+      await apiClient.delete(`/chatbot/sessions/${sessionId}`)
+      
+      // Clear localStorage
+      localStorage.removeItem(CURRENT_SESSION_KEY)
+      
+      // Load a new session (which will be created automatically)
+      await loadCurrentSession()
     } catch (error) {
-      console.error('Error creating session:', error)
+      console.error('Error clearing chat:', error)
     }
   }
 
@@ -114,7 +100,7 @@ export function ChatFull() {
     setLoading(true)
 
     try {
-      const res = await axios.post(`${API_BASE}/chatbot/chat`, {
+      const res = await apiClient.post('/chatbot/chat', {
         message: currentInput,
         session_id: sessionId,
         context: {}
@@ -122,22 +108,37 @@ export function ChatFull() {
 
       // Update session_id if this was a new session
       if (res.data.session_id && !sessionId) {
-        setSessionId(res.data.session_id)
+        const newSessionId = res.data.session_id
+        setSessionId(newSessionId)
+        // Store in localStorage for syncing with home page chat
+        localStorage.setItem(CURRENT_SESSION_KEY, newSessionId)
       }
 
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: res.data.content,
-        timestamp: res.data.timestamp
+      // Check if response contains an error message
+      const responseContent = res.data.content || ''
+      if (responseContent.toLowerCase().includes('error') || 
+          responseContent.toLowerCase().includes('quota') ||
+          responseContent.toLowerCase().includes('exceeded') ||
+          responseContent.toLowerCase().includes('429')) {
+        // This is an error response, show it to the user
+        const errorMessage: Message = {
+          role: 'assistant',
+          content: responseContent,
+          timestamp: res.data.timestamp
+        }
+        setMessages(prev => [...prev, errorMessage])
+      } else {
+        // Normal response
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: responseContent,
+          timestamp: res.data.timestamp
+        }
+        setMessages(prev => [...prev, assistantMessage])
       }
-
-      setMessages(prev => [...prev, assistantMessage])
-      
-      // Refresh sessions list
-      await loadSessions()
     } catch (error: any) {
       console.error('Error sending message:', error)
-      const errorDetail = error.response?.data?.detail || error.message || 'Unknown error'
+      const errorDetail = error.response?.data?.detail || error.response?.data?.content || error.message || 'Unknown error'
       console.error('Error details:', errorDetail)
       const errorMessage: Message = {
         role: 'assistant',
@@ -155,21 +156,26 @@ export function ChatFull() {
       <div className="border-b border-gray-200 px-6 py-2 bg-gray-50/50 flex-shrink-0">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              onClick={createNewSession}
-              className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors"
-              title="New Chat"
-            >
-              <Plus size={16} className="text-gray-600" />
-            </button>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
               <span className="text-sm text-gray-600">AI Assistant Ready</span>
             </div>
           </div>
-          {messages.length > 0 && (
-            <span className="text-xs text-gray-500">{messages.length} {messages.length === 1 ? 'message' : 'messages'}</span>
-          )}
+          <div className="flex items-center gap-3">
+            {messages.length > 0 && (
+              <>
+                <span className="text-xs text-gray-500">{messages.length} {messages.length === 1 ? 'message' : 'messages'}</span>
+                <button
+                  onClick={clearChat}
+                  className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5"
+                  title="Clear Chat"
+                >
+                  <Trash2 size={14} />
+                  Clear Chat
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

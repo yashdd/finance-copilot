@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
-import axios from 'axios'
-import { Newspaper, ExternalLink, Clock, Search, Filter } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import apiClient from '@/lib/api-client'
+import { Newspaper, ExternalLink, Clock, Search, Filter, Loader2 } from 'lucide-react'
 import { API_BASE } from '@/lib/api-config'
 
 interface NewsItem {
@@ -15,21 +15,88 @@ interface NewsItem {
   related_symbols?: string[]
 }
 
+interface SymbolSuggestion {
+  symbol: string
+  description: string
+  type?: string
+  displaySymbol?: string
+}
+
 export default function NewsPage() {
   const [news, setNews] = useState<NewsItem[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'general' | 'company'>('general')
   const [symbol, setSymbol] = useState('AAPL')
   const [searchQuery, setSearchQuery] = useState('')
+  const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const symbolInputRef = useRef<HTMLInputElement>(null)
+  const suggestionsRef = useRef<HTMLDivElement>(null)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const fetchNews = async () => {
+  const searchSymbols = async (query: string) => {
+    if (!query.trim() || query.length < 1) {
+      setSuggestions([])
+      setShowSuggestions(false)
+      return
+    }
+
+    setSearching(true)
+    try {
+      const res = await apiClient.get('/stock/search', {
+        params: { q: query, limit: 8 }
+      })
+      setSuggestions(res.data)
+      setShowSuggestions(res.data.length > 0)
+    } catch (error) {
+      console.error('Error searching symbols:', error)
+      setSuggestions([])
+      setShowSuggestions(false)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleSymbolChange = (value: string) => {
+    setSymbol(value)
+    
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    // Debounce API calls - wait 300ms after user stops typing
+    if (value.trim().length >= 1) {
+      searchTimeoutRef.current = setTimeout(() => {
+        searchSymbols(value)
+      }, 300)
+    } else {
+      setSuggestions([])
+      setShowSuggestions(false)
+    }
+  }
+
+  const selectSuggestion = (suggestion: SymbolSuggestion) => {
+    const selectedSymbol = suggestion.displaySymbol || suggestion.symbol
+    setSymbol(selectedSymbol)
+    setShowSuggestions(false)
+    symbolInputRef.current?.blur()
+    // Fetch news for the selected symbol
+    if (filter === 'company') {
+      fetchNews(selectedSymbol)
+    }
+  }
+
+  const fetchNews = async (symbolToFetch?: string) => {
+    const symbolToUse = symbolToFetch || symbol
     setLoading(true)
     try {
       let res
       if (filter === 'company') {
-        res = await axios.get(`${API_BASE}/news/company/${symbol.toUpperCase()}`)
+        res = await apiClient.get(`/news/company/${symbolToUse.toUpperCase()}`)
       } else {
-        res = await axios.get(`${API_BASE}/news/general?category=finance`)
+        res = await apiClient.get('/news/general?category=finance')
       }
       setNews(res.data)
     } catch (error) {
@@ -41,9 +108,26 @@ export default function NewsPage() {
 
   useEffect(() => {
     fetchNews()
-    const interval = setInterval(fetchNews, 15 * 60 * 1000) // Refresh every 15 minutes
+    const interval = setInterval(() => fetchNews(), 15 * 60 * 1000) // Refresh every 15 minutes
     return () => clearInterval(interval)
   }, [filter, symbol])
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        symbolInputRef.current &&
+        !symbolInputRef.current.contains(event.target as Node) &&
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(event.target as Node)
+      ) {
+        setShowSuggestions(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000)
@@ -105,15 +189,57 @@ export default function NewsPage() {
 
             {/* Symbol Input for Company News */}
             {filter === 'company' && (
-              <div className="flex-1">
+              <div className="flex-1 relative">
                 <input
+                  ref={symbolInputRef}
                   type="text"
                   value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
+                  onChange={(e) => handleSymbolChange(e.target.value)}
+                  onFocus={() => symbol.trim().length > 0 && suggestions.length > 0 && setShowSuggestions(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (showSuggestions && suggestions.length > 0) {
+                        selectSuggestion(suggestions[0])
+                      } else {
+                        fetchNews()
+                      }
+                    } else if (e.key === 'Escape') {
+                      setShowSuggestions(false)
+                    }
+                  }}
                   placeholder="Symbol (e.g., AAPL)"
                   className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-sm lg:text-base"
-                  onKeyPress={(e) => e.key === 'Enter' && fetchNews()}
                 />
+                
+                {/* Suggestions Dropdown */}
+                {showSuggestions && (suggestions.length > 0 || searching) && (
+                  <div
+                    ref={suggestionsRef}
+                    className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto"
+                  >
+                    {searching ? (
+                      <div className="p-3 text-center text-gray-500 text-sm flex items-center justify-center gap-2">
+                        <Loader2 size={16} className="animate-spin" />
+                        Searching...
+                      </div>
+                    ) : (
+                      suggestions.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => selectSuggestion(suggestion)}
+                          className="w-full px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0"
+                        >
+                          <div className="font-medium text-gray-900 text-sm">
+                            {suggestion.displaySymbol || suggestion.symbol}
+                          </div>
+                          <div className="text-xs text-gray-500 truncate">
+                            {suggestion.description}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

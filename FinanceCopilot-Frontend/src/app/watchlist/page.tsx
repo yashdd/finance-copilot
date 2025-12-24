@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
-import { Plus, Trash2, TrendingUp, TrendingDown, Search, RefreshCw, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Plus, Trash2, TrendingUp, TrendingDown, Search, RefreshCw, Loader2, AlertCircle, CheckCircle2, Brain, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { API_BASE } from '@/lib/api-config'
 import apiClient from '@/lib/api-client'
@@ -27,7 +27,6 @@ export default function WatchlistPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [newSymbol, setNewSymbol] = useState('')
   const [newName, setNewName] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
   const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -36,6 +35,12 @@ export default function WatchlistPage() {
   const symbolInputRef = useRef<HTMLInputElement>(null)
   const suggestionsRef = useRef<HTMLDivElement>(null)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Watchlist analyzer states
+  const [analyzerResult, setAnalyzerResult] = useState<string | null>(null)
+  const [analyzerLoading, setAnalyzerLoading] = useState(false)
+  const [analyzerStatus, setAnalyzerStatus] = useState<string>('')
+  const [showAnalyzer, setShowAnalyzer] = useState(false)
 
   const fetchWatchlist = async () => {
     try {
@@ -182,10 +187,53 @@ export default function WatchlistPage() {
     fetchWatchlist()
   }
 
-  const filteredItems = items.filter(item =>
-    item.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const fetchWatchlistAnalysis = async () => {
+    if (items.length === 0) return
+    
+    setAnalyzerLoading(true)
+    setAnalyzerResult(null)
+    setShowAnalyzer(true)
+    
+    const statusMessages = [
+      'Initializing AI agent for watchlist analysis...',
+      'Fetching watchlist data...',
+      'Gathering real-time quotes for all stocks...',
+      'Collecting fundamental metrics...',
+      'Fetching recent news for watchlist stocks...',
+      'Analyzing price trends...',
+      'Comparing portfolio performance...',
+      'Synthesizing comprehensive analysis...',
+      'Finalizing insights and recommendations...'
+    ]
+    
+    let statusIndex = 0
+    const statusInterval = setInterval(() => {
+      if (statusIndex < statusMessages.length) {
+        setAnalyzerStatus(statusMessages[statusIndex])
+        statusIndex++
+      }
+    }, 2000)
+    
+    try {
+      const res = await apiClient.post('/watchlist/analyze', {}, {
+        timeout: 60000 // 60 seconds for agentic operations
+      })
+      clearInterval(statusInterval)
+      setAnalyzerStatus('Analysis complete!')
+      setAnalyzerResult(res.data.analysis)
+    } catch (error: any) {
+      clearInterval(statusInterval)
+      console.error('Error fetching watchlist analysis:', error)
+      const errorMsg = error.response?.data?.detail || error.message || 'Failed to generate analysis'
+      setAnalyzerStatus(`Error: ${errorMsg}`)
+      setAnalyzerResult(`Error: ${errorMsg}`)
+    } finally {
+      setAnalyzerLoading(false)
+      setTimeout(() => setAnalyzerStatus(''), 3000)
+    }
+  }
+
+  const filteredItems = items
 
   if (loading) {
     return (
@@ -320,19 +368,83 @@ export default function WatchlistPage() {
           </div>
         </div>
 
-        {/* Search */}
+        {/* Watchlist Analyzer Button */}
         {items.length > 0 && (
-          <div className="mb-6">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by symbol or name..."
-                className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-              />
+          <div className="mb-6 flex justify-end">
+            <button
+              onClick={fetchWatchlistAnalysis}
+              disabled={analyzerLoading || items.length === 0}
+              className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white rounded-xl font-medium transition-all flex items-center gap-2 shadow-sm shadow-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {analyzerLoading ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Brain size={18} />
+                  AI Analyze Watchlist
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Watchlist Analyzer Results */}
+        {showAnalyzer && (
+          <div className="bg-white rounded-2xl shadow-sm p-6 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
+                <Sparkles size={18} className="text-white" />
+              </div>
+              <h3 className="text-lg lg:text-xl font-semibold text-gray-800">AI Watchlist Analysis</h3>
             </div>
+
+            {analyzerLoading ? (
+              <div className="text-center py-8">
+                <Loader2 size={32} className="animate-spin text-purple-500 mx-auto mb-4" />
+                <p className="text-gray-600 lg:text-lg font-medium mb-2">
+                  AI agent is analyzing your {items.length} stocks...
+                </p>
+                {analyzerStatus && (
+                  <div className="bg-purple-50 rounded-lg p-4 mt-4 max-w-md mx-auto">
+                    <p className="text-sm text-purple-700 animate-pulse">{analyzerStatus}</p>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-4">This may take 30-60 seconds as the AI analyzes each stock</p>
+              </div>
+            ) : analyzerResult ? (
+              <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-6 space-y-4">
+                {analyzerResult
+                  .replace(/\*\*/g, '') // Remove ** markdown
+                  .replace(/__/g, '') // Remove __ markdown
+                  .split('\n\n')
+                  .filter((section: string) => section.trim().length > 0) // Remove empty sections
+                  .map((section: string, idx: number) => {
+                    const trimmed = section.trim();
+                    const isSectionHeader = /^[A-Z][A-Z\s&]+$/.test(trimmed.split('\n')[0]);
+                    
+                    if (isSectionHeader) {
+                      const [header, ...content] = trimmed.split('\n');
+                      const contentText = content.join('\n').trim();
+                      return (
+                        <div key={idx}>
+                          <h3 className="font-semibold text-purple-900 text-lg mt-2 mb-2">{header}</h3>
+                          {contentText && (
+                            <p className="text-sm text-gray-700 leading-relaxed">{contentText}</p>
+                          )}
+                        </div>
+                      );
+                    }
+                    return (
+                      <p key={idx} className="text-sm text-gray-700 leading-relaxed">
+                        {trimmed}
+                      </p>
+                    );
+                  })}
+              </div>
+            ) : null}
           </div>
         )}
 
