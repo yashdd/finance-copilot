@@ -99,7 +99,7 @@ export default function RegisterPage() {
       let message = 'Registration failed. Please try again.'
       
       if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
-        message = 'Network error: Unable to connect to server. Please make sure the backend is running on http://localhost:8000'
+        message = 'Network error: Unable to connect to server. Please check your backend connection.'
       } else if (error.response) {
         // Server responded with error
         message = error.response?.data?.detail || error.response?.data?.message || error.message || message
