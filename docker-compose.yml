@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Backend service
+  backend:
+    build:
+      context: ./FinanceCopilot-Backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - FRONTEND_ORIGIN=http://localhost:3000
+      - POLYGON_IO_API_KEY=${POLYGON_IO_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - ALPHAVANTAGE_API_KEY=${ALPHAVANTAGE_API_KEY}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./FinanceCopilot-Backend:/app
+    networks:
+      - financecopilot-network
+
+  # Frontend service
+  frontend:
+    build:
+      context: ./FinanceCopilot-Frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://backend:8000/api
+    depends_on:
+      - backend
+    networks:
+      - financecopilot-network
+
+networks:
+  financecopilot-network:
+    driver: bridge

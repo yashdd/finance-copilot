@@ -1,7 +1,7 @@
 # FinanceCopilot
 
 **FinanceCopilot** is an AI-powered finance assistant under active development.  
-It aims to provide **real-time stock insights, interactive charts, news summaries, and an AI chatbot** for finance-related queries using **LangChain** and **FastAPI**.
+It aims to provide **real-time stock insights, interactive charts, news summaries, and an AI chatbot** for finance-related queries using **Google Gemini AI** and **FastAPI**.
 
 ---
 
@@ -16,9 +16,9 @@ It aims to provide **real-time stock insights, interactive charts, news summarie
 
 ## 🧩 Tech Stack
 - **Frontend:** Next.js + TailwindCSS  
-- **Backend:** FastAPI + LangChain  
-- **Data APIs:** TBD  
-- **Database:** TBD
+- **Backend:** FastAPI + Google Gemini AI  
+- **Data APIs:** Finnhub API  
+- **Database:** In-memory (ready for migration to PostgreSQL/SQLite)
 
 ---
 
