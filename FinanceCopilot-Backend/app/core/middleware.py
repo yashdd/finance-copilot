@@ -19,7 +19,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/",
         "/docs",
         "/openapi.json",
-        "/redoc"
+        "/redoc",
+        # Static/public assets commonly requested by browsers
+        "/favicon.ico",
+        "/robots.txt"
     ]
     
     async def dispatch(self, request: Request, call_next):
