@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
+import axios, { AxiosError, isAxiosError } from 'axios'
 import { Plus, Trash2, TrendingUp, TrendingDown, Search, RefreshCw, Loader2, AlertCircle, CheckCircle2, Brain, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { API_BASE } from '@/lib/api-config'
@@ -42,20 +42,21 @@ export default function WatchlistPage() {
   const [analyzerStatus, setAnalyzerStatus] = useState<string>('')
   const [showAnalyzer, setShowAnalyzer] = useState(false)
 
-  const fetchWatchlist = async () => {
+  const fetchWatchlist = async (): Promise<void> => {
     try {
       const res = await apiClient.get('/watchlist/all')
       setItems(res.data)
-    } catch (error: any) {
-      console.error('Error fetching watchlist:', error)
-      if (error.response) {
-        // Server responded with error
-        console.error('Response error:', error.response.status, error.response.data)
-      } else if (error.request) {
-        // Request made but no response (backend not running?)
-        console.error('No response received. Is backend running?')
-      } else {
-        console.error('Error:', error.message)
+    } catch (error: unknown) {
+      const err = error as AxiosError
+      console.error('Error fetching watchlist:', err)
+      if (isAxiosError(err)) {
+        if (err.response) {
+          console.error('Response error:', err.response.status, err.response.data)
+        } else if (err.request) {
+          console.error('No response received. Is backend running?')
+        } else {
+          console.error('Error:', err.message)
+        }
       }
     } finally {
       setLoading(false)
@@ -69,7 +70,7 @@ export default function WatchlistPage() {
     return () => clearInterval(interval)
   }, [])
 
-  const searchSymbols = async (query: string) => {
+  const searchSymbols = async (query: string): Promise<void> => {
     if (!query.trim() || query.length < 1) {
       setSuggestions([])
       setShowSuggestions(false)
@@ -83,7 +84,7 @@ export default function WatchlistPage() {
       })
       setSuggestions(res.data)
       setShowSuggestions(res.data.length > 0)
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error searching symbols:', error)
       setSuggestions([])
       setShowSuggestions(false)
@@ -121,7 +122,7 @@ export default function WatchlistPage() {
     symbolInputRef.current?.blur()
   }
 
-  const addToWatchlist = async () => {
+  const addToWatchlist = async (): Promise<void> => {
     if (!newSymbol.trim()) {
       setError('Please enter a stock symbol')
       return
@@ -144,9 +145,12 @@ export default function WatchlistPage() {
       
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000)
-    } catch (error: any) {
-      console.error('Error adding to watchlist:', error)
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to add stock to watchlist'
+    } catch (error: unknown) {
+      const err = error as AxiosError
+      console.error('Error adding to watchlist:', err)
+      const errorMessage = isAxiosError(err)
+        ? err.response?.data?.detail || err.message || 'Failed to add stock to watchlist'
+        : 'Failed to add stock to watchlist'
       setError(errorMessage)
       
       // Clear error message after 5 seconds
@@ -173,11 +177,11 @@ export default function WatchlistPage() {
     }
   }, [])
 
-  const removeFromWatchlist = async (symbol: string) => {
+  const removeFromWatchlist = async (symbol: string): Promise<void> => {
     try {
       await apiClient.delete(`/watchlist/remove/${symbol}`)
       fetchWatchlist()
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error removing from watchlist:', error)
     }
   }
@@ -187,7 +191,7 @@ export default function WatchlistPage() {
     fetchWatchlist()
   }
 
-  const fetchWatchlistAnalysis = async () => {
+  const fetchWatchlistAnalysis = async (): Promise<void> => {
     if (items.length === 0) return
     
     setAnalyzerLoading(true)
@@ -221,10 +225,13 @@ export default function WatchlistPage() {
       clearInterval(statusInterval)
       setAnalyzerStatus('Analysis complete!')
       setAnalyzerResult(res.data.analysis)
-    } catch (error: any) {
+    } catch (error: unknown) {
       clearInterval(statusInterval)
-      console.error('Error fetching watchlist analysis:', error)
-      const errorMsg = error.response?.data?.detail || error.message || 'Failed to generate analysis'
+      const err = error as AxiosError
+      console.error('Error fetching watchlist analysis:', err)
+      const errorMsg = isAxiosError(err)
+        ? err.response?.data?.detail || err.message || 'Failed to generate analysis'
+        : 'Failed to generate analysis'
       setAnalyzerStatus(`Error: ${errorMsg}`)
       setAnalyzerResult(`Error: ${errorMsg}`)
     } finally {
