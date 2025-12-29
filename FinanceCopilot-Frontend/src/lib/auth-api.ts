@@ -74,9 +74,10 @@ export const authService = {
       const response = await authApi.post<User>('/auth/register', data);
       console.log('Registration successful:', response.data);
       return response.data;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Registration API error:', error);
-      if (error.code === 'ERR_NETWORK') {
+      const err = error as { code?: string };
+      if (err.code === 'ERR_NETWORK') {
         throw new Error('Network error: Unable to connect to server. Please make sure the backend is running on http://localhost:8000');
       }
       throw error;

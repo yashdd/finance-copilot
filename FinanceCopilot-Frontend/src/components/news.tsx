@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { AxiosError, isAxiosError } from 'axios'
 import apiClient from '@/lib/api-client'
 import { Newspaper, ExternalLink, Clock, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
@@ -30,7 +31,7 @@ export function News() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchLatestNews = async () => {
+  const fetchLatestNews = useCallback(async (): Promise<void> => {
     try {
       console.log('Fetching latest finance news')
       const res = await apiClient.get('/news/general?category=finance', {
@@ -38,13 +39,13 @@ export function News() {
       })
       console.log('Latest news response:', res.data)
       setLatestNews((res.data || []).slice(0, 5)) // Limit to 5 items
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error fetching latest news:', error)
       setLatestNews([])
     }
-  }
+  }, [])
 
-  const fetchWatchlistNews = async () => {
+  const fetchWatchlistNews = useCallback(async (): Promise<void> => {
     try {
       // First, fetch watchlist
       const watchlistRes = await apiClient.get('/watchlist/all')
@@ -63,7 +64,7 @@ export function News() {
         // Try symbol first, then fallback to company name if symbol fails
         const symbolPromise = apiClient.get(`/news/company/${item.symbol}`, {
           timeout: 8000
-        }).catch(err => {
+        }).catch((err: unknown) => {
           console.warn(`Failed to fetch news for symbol ${item.symbol}:`, err)
           return null // Return null to indicate failure
         })
@@ -76,14 +77,14 @@ export function News() {
             // Fallback to company name search
             return apiClient.get(`/news/company-name/${encodeURIComponent(item.name)}`, {
               timeout: 8000
-            }).catch(err => {
+            }).catch((err: unknown) => {
               console.warn(`Failed to fetch news for company name ${item.name}:`, err)
               return { data: [] } // Return empty array on error
             })
           } else {
             return { data: [] } // Return empty array if no name available
           }
-        }).catch(err => {
+        }).catch((err: unknown) => {
           console.warn(`Failed to fetch news for ${item.symbol}/${item.name}:`, err)
           return { data: [] } // Return empty array on error
         })
@@ -95,8 +96,7 @@ export function News() {
       const allNews: NewsItem[] = []
       const seenUrls = new Set<string>()
       
-      newsResults.forEach((result, index) => {
-        const item = watchlist[index]
+      newsResults.forEach((result) => {
         const newsItems: NewsItem[] = result.data || []
         
         newsItems.forEach(newsItem => {
@@ -115,44 +115,48 @@ export function News() {
 
       console.log('Watchlist news response:', sortedNews)
       setWatchlistNews(sortedNews)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error fetching watchlist news:', error)
       setWatchlistNews([])
     }
-  }
+  }, [])
 
-  const fetchAllNews = async () => {
+  const fetchAllNews = useCallback(async (): Promise<void> => {
     setLoading(true)
     setError(null)
     try {
       await Promise.all([fetchLatestNews(), fetchWatchlistNews()])
-    } catch (error: any) {
-      if (error.response) {
-        setError(error.response.data?.detail || `Error: ${error.response.status}`)
-      } else if (error.code === 'ECONNABORTED') {
-        setError('Request timeout - backend may be slow')
-      } else if (error.request) {
-        setError('Cannot connect to backend')
+    } catch (error: unknown) {
+      if (isAxiosError(error)) {
+        if (error.response) {
+          setError(error.response.data?.detail || `Error: ${error.response.status}`)
+        } else if (error.code === 'ECONNABORTED') {
+          setError('Request timeout - backend may be slow')
+        } else if (error.request) {
+          setError('Cannot connect to backend')
+        } else {
+          setError('Failed to load news')
+        }
       } else {
         setError('Failed to load news')
       }
     } finally {
       setLoading(false)
     }
-  }
+  }, [fetchLatestNews, fetchWatchlistNews])
 
   useEffect(() => {
     fetchAllNews()
     const interval = setInterval(fetchAllNews, 15 * 60 * 1000) // Refresh every 15 minutes
     return () => clearInterval(interval)
-  }, [])
+  }, [fetchAllNews])
 
   // Refresh watchlist news when switching to watchlist tab
   useEffect(() => {
     if (activeTab === 'watchlist') {
       fetchWatchlistNews()
     }
-  }, [activeTab])
+  }, [activeTab, fetchWatchlistNews])
 
   // Get current news based on active tab
   const currentNews = activeTab === 'latest' ? latestNews : watchlistNews

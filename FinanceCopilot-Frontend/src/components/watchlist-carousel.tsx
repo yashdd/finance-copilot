@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { AxiosError, isAxiosError } from 'axios'
 import apiClient from '@/lib/api-client'
 import { TrendingUp, TrendingDown, ChevronRight, Plus, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
@@ -18,24 +19,30 @@ export function WatchlistCarousel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchWatchlist = async () => {
+  const fetchWatchlist = async (): Promise<void> => {
     try {
       setError(null)
       console.log('Fetching watchlist from:', `${API_BASE}/watchlist/all`)
       const res = await apiClient.get('/watchlist/all')
       console.log('Watchlist response:', res.data)
       setItems(res.data || [])
-    } catch (error: any) {
-      console.error('Error fetching watchlist:', error)
+    } catch (error: unknown) {
+      const err = error as AxiosError
+      console.error('Error fetching watchlist:', err)
       console.error('   URL attempted:', `${API_BASE}/watchlist/all`)
-      if (error.response) {
-        console.error('   Response status:', error.response.status)
-        console.error('   Response data:', error.response.data)
-      }
-      if (error.code === 'ECONNABORTED') {
-        setError('Request timeout - backend may be slow')
-      } else if (error.request) {
-        setError('Cannot connect to backend')
+
+      if (isAxiosError(err)) {
+        if (err.response) {
+          console.error('   Response status:', err.response.status)
+          console.error('   Response data:', err.response.data)
+        }
+        if (err.code === 'ECONNABORTED') {
+          setError('Request timeout - backend may be slow')
+        } else if (err.request) {
+          setError('Cannot connect to backend')
+        } else {
+          setError('Failed to load watchlist')
+        }
       } else {
         setError('Failed to load watchlist')
       }

@@ -24,7 +24,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
@@ -42,7 +42,7 @@ export const useAuthStore = create<AuthState>()(
           });
           // Return response to allow checking in component
           return response;
-        } catch (error: any) {
+        } catch (error: unknown) {
           set({ isLoading: false });
           throw error;
         }
@@ -57,7 +57,7 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false, // Not authenticated until email verified
             isLoading: false,
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           set({ isLoading: false });
           throw error;
         }
@@ -94,7 +94,7 @@ export const useAuthStore = create<AuthState>()(
           try {
             const currentUser = await authService.getCurrentUser();
             set({ user: currentUser });
-          } catch (error) {
+          } catch (_error: unknown) {
             // Token invalid, clear auth
             set({
               user: null,

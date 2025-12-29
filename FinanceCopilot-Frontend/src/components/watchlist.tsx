@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { AxiosError, isAxiosError } from 'axios'
 import apiClient from '@/lib/api-client'
 import { Plus, Trash2, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
 
@@ -30,25 +31,28 @@ export function Watchlist() {
   const suggestionsRef = useRef<HTMLDivElement>(null)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const fetchWatchlist = async () => {
+  const fetchWatchlist = async (): Promise<void> => {
     try {
       const res = await apiClient.get('/watchlist/all')
       setItems(res.data)
-    } catch (error: any) {
-      console.error('Error fetching watchlist:', error)
-      if (error.response) {
-        console.error('Response error:', error.response.status, error.response.data)
-      } else if (error.request) {
-        console.error('No response received. Is backend running?')
-      } else {
-        console.error('Error:', error.message)
+    } catch (error: unknown) {
+      const err = error as AxiosError
+      console.error('Error fetching watchlist:', err)
+      if (isAxiosError(err)) {
+        if (err.response) {
+          console.error('Response error:', err.response.status, err.response.data)
+        } else if (err.request) {
+          console.error('No response received. Is backend running?')
+        } else {
+          console.error('Error:', err.message)
+        }
       }
     } finally {
       setLoading(false)
     }
   }
 
-  const searchSymbols = async (query: string) => {
+  const searchSymbols = async (query: string): Promise<void> => {
     if (!query.trim() || query.length < 1) {
       setSuggestions([])
       setShowSuggestions(false)
@@ -62,8 +66,9 @@ export function Watchlist() {
       })
       setSuggestions(res.data)
       setShowSuggestions(res.data.length > 0)
-    } catch (error) {
-      console.error('Error searching symbols:', error)
+    } catch (error: unknown) {
+      const err = error as AxiosError
+      console.error('Error searching symbols:', err)
       setSuggestions([])
       setShowSuggestions(false)
     } finally {
@@ -121,7 +126,7 @@ export function Watchlist() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const addToWatchlist = async () => {
+  const addToWatchlist = async (): Promise<void> => {
     if (!newSymbol.trim()) return
     try {
       await apiClient.post('/watchlist/add', {
@@ -133,16 +138,16 @@ export function Watchlist() {
       setSuggestions([])
       setShowSuggestions(false)
       fetchWatchlist()
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error adding to watchlist:', error)
     }
   }
 
-  const removeFromWatchlist = async (symbol: string) => {
+  const removeFromWatchlist = async (symbol: string): Promise<void> => {
     try {
       await apiClient.delete(`/watchlist/remove/${symbol}`)
       fetchWatchlist()
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error removing from watchlist:', error)
     }
   }
