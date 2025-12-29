@@ -40,8 +40,6 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
             isLoading: false,
           });
-          // Return response to allow checking in component
-          return response;
         } catch (error: unknown) {
           set({ isLoading: false });
           throw error;
