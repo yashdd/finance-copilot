@@ -22,6 +22,18 @@ interface SymbolSuggestion {
 }
 
 export default function WatchlistPage() {
+  const getAxiosErrorMessage = (err: AxiosError, fallback: string): string => {
+    const data = err.response?.data as
+      | { detail?: string; message?: string; content?: string }
+      | string
+      | undefined
+    if (typeof data === 'string') return data
+    if (data && (data.detail || data.message || data.content)) {
+      return data.detail ?? data.message ?? data.content ?? fallback
+    }
+    return err.message || fallback
+  }
+
   const [items, setItems] = useState<WatchlistItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -149,7 +161,7 @@ export default function WatchlistPage() {
       const err = error as AxiosError
       console.error('Error adding to watchlist:', err)
       const errorMessage = isAxiosError(err)
-        ? err.response?.data?.detail || err.message || 'Failed to add stock to watchlist'
+        ? getAxiosErrorMessage(err, 'Failed to add stock to watchlist')
         : 'Failed to add stock to watchlist'
       setError(errorMessage)
       
@@ -230,7 +242,7 @@ export default function WatchlistPage() {
       const err = error as AxiosError
       console.error('Error fetching watchlist analysis:', err)
       const errorMsg = isAxiosError(err)
-        ? err.response?.data?.detail || err.message || 'Failed to generate analysis'
+        ? getAxiosErrorMessage(err, 'Failed to generate analysis')
         : 'Failed to generate analysis'
       setAnalyzerStatus(`Error: ${errorMsg}`)
       setAnalyzerResult(`Error: ${errorMsg}`)

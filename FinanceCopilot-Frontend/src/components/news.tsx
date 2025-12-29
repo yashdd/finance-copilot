@@ -4,6 +4,7 @@ import { AxiosError, isAxiosError } from 'axios'
 import apiClient from '@/lib/api-client'
 import { Newspaper, ExternalLink, Clock, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
+import { getAxiosErrorMessage } from '@/lib/utils'
 
 interface NewsItem {
   id?: number
@@ -129,7 +130,7 @@ export function News() {
     } catch (error: unknown) {
       if (isAxiosError(error)) {
         if (error.response) {
-          setError(error.response.data?.detail || `Error: ${error.response.status}`)
+          setError(getAxiosErrorMessage(error as AxiosError, `Error: ${error.response.status}`))
         } else if (error.code === 'ECONNABORTED') {
           setError('Request timeout - backend may be slow')
         } else if (error.request) {
