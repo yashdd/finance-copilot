@@ -1,21 +1,104 @@
-import { Suspense } from 'react'
-import StocksClient from './stocks-client'
+'use client'
+import { useState, useEffect } from 'react'
+import axios from 'axios'
+import apiClient from '@/lib/api-client'
+import { API_BASE } from '@/lib/api-config'
+import { Search, TrendingUp, TrendingDown, Activity, BarChart3, LineChart, AreaChart, Filter, Building2, Sparkles, Loader2, GitCompare, Brain } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { LineChart as RechartsLineChart, AreaChart as RechartsAreaChart, BarChart, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Line, Area, Bar, Legend, Scatter } from 'recharts'
 
-export default function StocksPage() {
-  return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-emerald-50/30 to-teal-50/30 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading stocks...</p>
-        </div>
-      </div>
-    }>
-      <StocksClient />
-    </Suspense>
-  )
+interface StockQuote {
+  symbol: string
+  current_price: number
+  change: number
+  change_percent: number
+  high: number
+  low: number
+  open: number
+  previous_close: number
+  volume: number
+  timestamp: number
 }
 
+interface StockCandle {
+  symbol: string
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+interface StockMetrics {
+  symbol: string
+  pe_ratio?: number
+  eps?: number
+  market_cap?: number
+  dividend_yield?: number
+  profit_margin?: number
+  revenue_growth?: number
+  price_to_book?: number
+  debt_to_equity?: number
+}
+
+interface CompanyAnalysis {
+  symbol: string
+  name?: string
+  sector?: string
+  industry?: string
+  metrics: {
+    pe_ratio?: number
+    eps?: number
+    market_cap?: number
+    dividend_yield?: number
+    profit_margin?: number
+    revenue_growth?: number
+    price_to_book?: number
+    debt_to_equity?: number
+  }
+  health_score?: number
+  ai_summary?: string
+}
+
+type ChartType = 'line' | 'area' | 'ohlc' | 'candlestick' | 'scatter' | 'composed'
+type TimePeriod = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | 'ALL'
+type Resolution = '1' | '5' | '15' | '30' | '60' | 'D' | 'W' | 'M'
+
+export default function StocksClient() {
+  const searchParams = useSearchParams()
+  const [symbol, setSymbol] = useState(searchParams.get('symbol') || 'AAPL')
+  const [currentSymbol, setCurrentSymbol] = useState(searchParams.get('symbol') || 'AAPL')
+  const [quote, setQuote] = useState<StockQuote | null>(null)
+  const [metrics, setMetrics] = useState<StockMetrics | null>(null)
+  const [candles, setCandles] = useState<StockCandle[]>([])
+  const [loading, setLoading] = useState(false)
+  const [chartLoading, setChartLoading] = useState(false)
+  const [companyAnalysis, setCompanyAnalysis] = useState<CompanyAnalysis | null>(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [showAnalysis, setShowAnalysis] = useState(false)
+  
+  // Agentic analysis states
+  const [agenticAnalysis, setAgenticAnalysis] = useState<string | null>(null)
+  const [agenticAnalysisLoading, setAgenticAnalysisLoading] = useState(false)
+  const [agenticAnalysisStatus, setAgenticAnalysisStatus] = useState<string>('')
+  
+  // Comparison states
+  const [compareSymbol1, setCompareSymbol1] = useState('')
+  const [compareSymbol2, setCompareSymbol2] = useState('')
+  const [comparisonResult, setComparisonResult] = useState<string | null>(null)
+  const [comparisonLoading, setComparisonLoading] = useState(false)
+  const [comparisonStatus, setComparisonStatus] = useState<string>('')
+  const [showComparison, setShowComparison] = useState(false)
+  const [symbol2Suggestions, setSymbol2Suggestions] = useState<Array<{symbol: string; description: string}>>([])
+  const [showSymbol2Suggestions, setShowSymbol2Suggestions] = useState(false)
+  const [searchingSymbol2, setSearchingSymbol2] = useState(false)
+  const [symbolSuggestions, setSymbolSuggestions] = useState<Array<{symbol: string; description: string}>>([])
+  const [showSymbolSuggestions, setShowSymbolSuggestions] = useState(false)
+  const [searchingSymbol, setSearchingSymbol] = useState(false)
+  
+  // Chart filters
+  const [chartType, setChartType] = useState<ChartType>('line')
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1M')
   const [resolution, setResolution] = useState<Resolution>('D')
   const [showVolume, setShowVolume] = useState(true)
