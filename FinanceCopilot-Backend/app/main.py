@@ -88,7 +88,7 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,  # Explicit list from settings
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.vercel\.app",  # Localhost + Vercel domains
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://finance-copilot-[a-zA-Z0-9\-]+\.vercel\.app",  # Localhost + all finance-copilot Vercel domains
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
