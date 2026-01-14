@@ -1,4 +1,4 @@
-# 💼 FinanceCopilot
+# 💼 Financial Assistant
 
 > AI-powered financial assistant with real-time stock data, intelligent chatbot, and personalized insights
 
@@ -8,7 +8,7 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-FinanceCopilot is a full-stack financial intelligence platform that combines real-time market data with AI-powered insights. Built with FastAPI and Next.js, it provides users with stock tracking, AI chat assistance, news aggregation, and personalized financial analysis.
+It is a full-stack financial intelligence platform that combines real-time market data with AI-powered insights. Built with FastAPI and Next.js, it provides users with stock tracking, AI chat assistance, news aggregation, and personalized financial analysis.
 
 ---
 
